@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/sethgrid/kverr"
 )
 
 type InMemoryTaskQueue struct {
@@ -71,7 +73,7 @@ func (m *InMemoryTaskQueue) MarkTaskComplete(taskID int) error {
 
 	task, exists := m.tasks[taskID]
 	if !exists {
-		return fmt.Errorf("task not found")
+		return kverr.New(fmt.Errorf("task not found"), "task_id", task.ID)
 	}
 	task.mu.Lock()
 	defer task.mu.Unlock()

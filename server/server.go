@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"fmt"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -78,17 +79,18 @@ func New(conf Config) (*Server, error) {
 	} else {
 		rootLogger.Error("secure cookies and tls to the db are turned off")
 	}
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?timeout=5s&parseTime=true%s",
+	// TODO: after db bootstrap, include db name before timeout and other options
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?timeout=5s&parseTime=true%s",
 		conf.DBUser,
 		conf.DBPass,
 		conf.DBHost,
 		strings.TrimPrefix(conf.DBPort, ":"),
-		conf.DBName,
+
 		customTLS,
 	)
 
 	// helpful if you are having trouble reaching the db; warning: prints password
-	// log.Println("dsn: ", dsn)
+	log.Println("dsn: ", dsn)
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {

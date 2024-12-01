@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/sethgrid/kverr"
 )
 
 type MySQLTaskQueue struct {
@@ -126,7 +128,7 @@ func (m *MySQLTaskQueue) MarkTaskComplete(taskID int) error {
 		FOR UPDATE
 	`, taskID).Scan(&task.ID, &task.UserID, &task.Status, &task.TaskType, &task.Attempts)
 	if err != nil {
-		return err
+		return kverr.New(err, "task_id", taskID)
 	}
 
 	// Step 2: Log the task details
@@ -139,7 +141,7 @@ func (m *MySQLTaskQueue) MarkTaskComplete(taskID int) error {
 		WHERE id = ?
 	`, taskID)
 	if err != nil {
-		return err
+		return kverr.New(err, "task_id", taskID, "user_id", task.UserID)
 	}
 
 	return nil

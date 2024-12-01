@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/sethgrid/kverr"
 )
 
 type Task struct {
@@ -162,7 +164,7 @@ func (tq *Runner) processTask(task Task) {
 
 	err := tq.TaskStore.MarkTaskComplete(task.ID)
 	if err != nil {
-		logger.Error("unable to mark task complete")
+		logger.Error("unable to mark task complete", kverr.YoinkArgs(err)...)
 
 	}
 }
