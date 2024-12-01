@@ -14,8 +14,8 @@ What comes out of the box with this example implementation:
   
 Some interesting choices:
 
-  - The test server takes a variadic list or log writers, but only takes the first one. This is the closest thing to an optional parameter. It makes writing tests nice because you use the same new test server constructor, and you can optionally send in a logger. This would probably be better implemented as Options. 
-  - each request places a logger into the context and there is a package with functions for making life easier. This includes a strange thing I did where I put in a backup logger that is kinda gross, but because it is a variadic argument, you never see it nor have to use it.
+  - The test server takes a variadic list of log writers, but only takes the first one. This is the closest thing to an optional parameter. It makes writing tests nice because you use the same new test server constructor, and you can optionally send in a logger. This would probably be better implemented as Options. 
+  - each request places a logger into the context and there is a package with functions for making life easier for pulling the logger out of existing contexts / requests. This includes a strange thing I did where I put in a backup logger that is kinda gross, but because it is a variadic argument, you never see it nor have to use it.
   - There is a util directory. I know, I know. I still find value in a junk drawer. When it makes sense, things get pulled into their own package. And it is behind /internal/ anyway.
   - For migrations, I use `goose`, but I pulled those examples out for now.
 
