@@ -19,6 +19,7 @@ import (
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/sethgrid/helloworld/events"
 	"github.com/sethgrid/helloworld/logger"
 	"github.com/sethgrid/helloworld/taskqueue"
 )
@@ -33,11 +34,17 @@ type contextKey string
 
 var ctxUser contextKey = "user"
 
+type eventWriter interface {
+	Write(userID int64, message string) error
+	Close() error
+}
+
 type Server struct {
-	config   Config
-	taskq    taskqueue.Tasker
-	addr     string
-	protocol string
+	config     Config
+	taskq      taskqueue.Tasker
+	eventStore eventWriter
+	addr       string
+	protocol   string
 
 	mu           sync.Mutex
 	started      bool
@@ -128,6 +135,7 @@ func New(conf Config) (*Server, error) {
 		protocol:     protocol,
 		inDebug:      conf.EnableDebug,
 		taskq:        taskqueue.NewMySQLTaskQueue(db, rootLogger, 3, 30*time.Second),
+		eventStore:   events.NewUserEvent(db, 2, rootLogger),
 	}, nil
 }
 

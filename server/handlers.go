@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"net/http"
 
@@ -36,6 +37,17 @@ func RandomFailure() error {
 	if rand.Intn(2) == 0 { // Generate a random integer: 0 or 1
 		// NOTE: the key value pair "val":val will be available to the server error logs
 		return kverr.New(errors.New("operation failed"), "val", val)
+	}
+	return nil
+}
+
+// DoSomethingWithEvents is for illustrative purposes of faking during tests,
+// showing how faked dependencies bubble up in test assertions
+func (s *Server) DoSomethingWithEvents() error {
+	err := s.eventStore.Write(180, "a message in a bottle")
+	if err != nil {
+		s.parentLogger.Error(err.Error())
+		return fmt.Errorf("unable to DoSomethingWithEvents: %w", err)
 	}
 	return nil
 }

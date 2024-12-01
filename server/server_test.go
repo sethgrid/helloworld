@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,6 +24,24 @@ func TestHealthcheck(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, resp.StatusCode, http.StatusOK)
+}
+
+func TestEventStoreErr(t *testing.T) {
+	var logbuf bytes.Buffer
+
+	srv, err := newTestServer(&logbuf)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	// replacet the event store
+	srv.eventStore = &fakeEventStore{err: fmt.Errorf("oh noes, mysql err")}
+
+	err = srv.DoSomethingWithEvents()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "oh noes, mysql err")
+
+	require.Contains(t, logbuf.String(), "oh noes, mysql err")
 }
 
 // newTestServer is generally called with no parameter. A bit of a hack on variadics, but if you want to pass in a buffer, pass one in.
@@ -49,6 +68,7 @@ func newTestServer(logWriter ...io.Writer) (*Server, error) {
 		protocol:     "http://",
 		taskq:        q,
 		parentLogger: log,
+		eventStore:   &fakeEventStore{},
 
 		mu: sync.Mutex{},
 	}
@@ -74,4 +94,16 @@ func newTestServer(logWriter ...io.Writer) (*Server, error) {
 
 	return srv, nil
 
+}
+
+type fakeEventStore struct {
+	err error
+}
+
+func (f *fakeEventStore) Write(userID int64, message string) error {
+	return f.err
+}
+
+func (f *fakeEventStore) Close() error {
+	return nil
 }
