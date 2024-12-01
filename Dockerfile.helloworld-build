@@ -1,0 +1,22 @@
+# not pulling latest because there was a glibc issue when running the generated binary on DO
+FROM golang:1.21-bullseye
+
+WORKDIR /go/src/helloworld
+
+### DISABLED THIS OPTIMIZATION
+### Was getting timeouts to the go proxy even if disabled, direct, set explicitly...
+### Vendoring is better anyway
+# Copy only the go.mod and go.sum files to leverage Docker cache
+# COPY go.mod go.sum ./
+
+# Download dependencies
+# RUN GOPROXY=https://goproxy.io go mod download
+
+# Copy the rest of the application code
+COPY . .
+
+RUN export helloworld_VERSION=$(cat VERSION) && \
+  GOOS=linux GOARCH=amd64 go build -ldflags="-X 'main.Version=${helloworld_VERSION}'" \
+  -o /go/src/helloworld/bin/helloworld cmd/helloworld/main.go
+
+CMD ["bin/helloworld"]

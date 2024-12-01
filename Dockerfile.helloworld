@@ -1,0 +1,10 @@
+FROM golang:latest
+
+WORKDIR /go/src/helloworld
+
+COPY . .
+
+RUN go build -ldflags="-X 'main.Version=${helloworld_VERSION}'" \
+  -o /go/src/helloworld/bin/helloworld cmd/helloworld/main.go
+
+CMD ["bin/helloworld"]

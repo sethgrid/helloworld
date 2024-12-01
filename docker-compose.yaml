@@ -1,0 +1,169 @@
+services: 
+  mysql:
+    image: mysql:8
+    container_name: mysql
+    ports:
+      - "3306:3306"  # Exposes MySQL to host on port 3306
+    environment:
+      MYSQL_ROOT_PASSWORD: root  # Set your root password
+      MYSQL_USER: testuser               # Example user
+      MYSQL_PASSWORD: testuser  # Example user password
+    volumes:
+      - ./sql:/docker-entrypoint-initdb.d/
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot | grep 'mysqld is alive'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - db-network
+
+  helloworld:
+    build:
+      context: .
+      dockerfile: Dockerfile.helloworld
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:16667/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "16666:16666"
+      - "16667:16667"
+    expose:
+      - "16666"
+      - "16667"
+    environment:
+      helloworld_HOSTNAME: "helloworld"
+      helloworld_PORT: "16666"
+      helloworld_INTERNAL_PORT: "16667"
+      helloworld_DB_HOST: mysql
+      helloworld_DB_PORT: 3306
+      helloworld_DB_USER: testuser
+      helloworld_DB_PASS: testuser
+      helloworld_VERSION: "dev"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: ["./bin/helloworld"]
+    networks:
+      - db-network
+      - loki-network
+
+  helloworld-build:
+    build:
+      context: .
+      dockerfile: Dockerfile.helloworld-build
+    # Allows binaries built in docker to be shared back to the host system
+    volumes:
+      - ./bin:/go/src/helloworld/bin
+    command: ["sh", "-c", "export helloworld_VERSION=$(cat VERSION) && GOOS=linux GOARCH=amd64 go build -ldflags=\"-X 'main.Version=${helloworld_VERSION}'\" -o /go/src/helloworld/bin/helloworld cmd/helloworld/main.go && echo 'Binary built! See bin/helloworld'"]
+
+  db-load-seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.db-load-seed
+    depends_on:
+      - mysql
+    networks:
+      - db-network
+
+  integration:
+    build:
+      context: .
+      dockerfile: Dockerfile.integration
+    environment:
+      HOST_ADDR: "helloworld"
+      DB_ADDR: "mysql"
+      DB_PORT: "3306"
+      PORT: "16666"
+      helloworld_VERSION: "integration-dev" # used in helloworld's base image
+      # used in server_integration_test.go
+      USE_LOCAL_helloworld: true
+    depends_on:
+      - helloworld
+      - mysql
+      - db-load-seed
+    command: ["./bin/integration_tests"]
+    networks:
+      - db-network
+      - loki-network
+
+  grafana:
+    environment:
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    entrypoint:
+      - sh
+      - -euc
+      - |
+        mkdir -p /etc/grafana/provisioning/datasources
+        cat <<EOF > /etc/grafana/provisioning/datasources/ds.yaml
+        apiVersion: 1
+        datasources:
+        - name: Loki
+          type: loki
+          access: proxy 
+          orgId: 1
+          url: http://loki:3100
+          basicAuth: false
+          isDefault: true
+          version: 1
+          editable: false
+        EOF
+        /run.sh
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    networks:
+      - loki-network
+    depends_on:
+      - prometheus
+      - loki
+      - promtail
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./docker-configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    ports:
+      - "9090:9090"
+    networks:
+      - loki-network
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./docker-configs/loki:/loki
+      - ./docker-configs/loki/loki-config.yaml:/etc/loki/loki-config.yaml
+    command: -config.file=/etc/loki/loki-config.yaml
+    networks:
+      - loki-network
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ./docker-configs/promtail/promtail-config.yaml:/etc/promtail/promtail-config.yaml
+      - /run/systemd/journal:/run/systemd/journal  # If you’re using journalctl
+      - /var/log/journal:/var/log/journal:ro    # Mount journal logs
+      - /run/log/journal:/run/log/journal:ro    # Mount systemd runtime logs
+      - ./logs/helloworld.logs:/var/log/helloworld.logs
+    command: "-config.file=/etc/promtail/promtail-config.yaml -print-config-stderr"
+    networks:
+      - loki-network
+
+networks:
+  loki-network:
+    driver: bridge
+  db-network:
+    driver: bridge
+
+volumes:
+  db_data:

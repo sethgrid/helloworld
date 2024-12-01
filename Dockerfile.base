@@ -1,0 +1,20 @@
+# docker build -t sethgrid/golang-chromium:v0.1.0 -f Dockerfile.base .
+# docker push sethgrid/golang-chromium:v0.1.0
+
+FROM golang:latest
+
+# NOTE: this must contain 'helloworld' to match the value in getRootDir() otherwise we can't fetch templates and stuff
+WORKDIR /go/src/helloworld
+
+# Copy only the go.mod and go.sum files to leverage Docker cache
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy the rest of the application code
+COPY . .
+
+# by running the unitintegration tests, we force the rod package to place chromium in a known location
+# this allows our main application to then run unitintegration withoug having to download chromium.
+RUN go test ./... -tags=unitintegration -v -timeout=120s

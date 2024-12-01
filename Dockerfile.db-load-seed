@@ -1,0 +1,13 @@
+FROM alpine:latest
+
+# Install make, MySQL client, and other necessary tools
+RUN apk update && apk add --no-cache mysql-client bash make docker
+
+# Set working directory
+WORKDIR /app
+
+# Copy your Makefile and other necessary files
+COPY . .
+
+# Default command
+CMD ["sh", "-c", "mysql -h mysql -uroot -proot < /app/sql/seed.sql"]

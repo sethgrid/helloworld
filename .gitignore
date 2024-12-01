@@ -1,0 +1,4 @@
+bin/*
+settings.env
+logs/*
+docker-configs/loki/*

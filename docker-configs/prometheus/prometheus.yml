@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'helloworld-app'
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+        - 192.168.140.130:16667 # ip addr show, on local
+        - 138.68.228.188:16667 # this is for internal docker to reach the external host on prod
+  - job_name: 'mysql-server' # this currently does not work. like, you can curl that endpoint and it has /metrics, but the api doesn't work. not sure why yet.
+    static_configs:
+      - targets: ['localhost:9194']

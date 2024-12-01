@@ -1,0 +1,12 @@
+FROM golang:1.21-bullseye
+
+# NOTE: this must contain 'helloworld' to match the value in getRootDir() otherwise we can't fetch templates and stuff
+WORKDIR /go/src/helloworld
+COPY . .
+
+# the tests need to pull a headless browser on first run; give more time for that
+# TODO - build a base image that has already ran the headless browser
+RUN go test -tags=unitintegration -timeout=3m -race -v ./...
+RUN go build -o /go/src/helloworld/bin/integration_tests cmd/integration_tests/main.go
+
+CMD ["bin/integration_tests"]

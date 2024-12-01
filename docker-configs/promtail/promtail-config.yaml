@@ -1,0 +1,53 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: 'dev-logs'
+    static_configs:
+      - targets: 
+          - localhost
+        labels:
+          job: 'dev-service'
+          __path__: /var/log/helloworld.logs  # set up with volume mount in docker compose
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            msg: msg
+            timestamp: time
+            version: version
+            user_id: user_id
+            rid: rid
+      - labels:
+          level:
+          msg:
+          version:
+
+  - job_name: 'systemd-journal'  # If your service logs to systemd (journalctl)
+    journal:
+      labels:
+        job: 'systemd-journal'
+      path: '/var/log/journal'
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: 'unit'
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            msg: msg
+            timestamp: time
+            version: version
+            user_id: user_id
+            rid: rid
+      - labels:
+          level:
+          msg:
+          version:
