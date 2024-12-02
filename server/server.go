@@ -11,8 +11,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -326,6 +328,18 @@ func (s *Server) Serve() error {
 	s.mu.Lock()
 	s.publicHTTPServer = &publicHTTP
 	s.mu.Unlock()
+
+	// Graceful shutdown on signals
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-quit
+		s.parentLogger.Info("shutdown signal received, shutting down gracefully...")
+		if err := s.Close(); err != nil {
+			s.parentLogger.Error("error during shutdown", "error", err.Error())
+		}
+	}()
 
 	// blocking
 	if err := publicHTTP.Serve(listener); err != nil {
