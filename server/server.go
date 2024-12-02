@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -349,6 +350,30 @@ func (s *Server) Serve() error {
 	}
 
 	return nil
+}
+
+// WithLogbuf is a test helper for server configuration to override logger's buffer
+func WithLogbuf(buf *bytes.Buffer) func(*Server) {
+	return func(s *Server) {
+		logger := slog.New(slog.NewJSONHandler(buf, nil))
+		s.parentLogger = logger
+		s.taskq = taskqueue.NewInMemoryTaskQueue(1, 15*time.Second, logger)
+	}
+}
+
+// WithLogger is a test helper for server configuration to override logger
+func WithLogger(logger *slog.Logger) func(*Server) {
+	return func(s *Server) {
+		s.parentLogger = logger
+		s.taskq = taskqueue.NewInMemoryTaskQueue(1, 15*time.Second, logger)
+	}
+}
+
+// WithConfig is a test helper for overwriting server configuration
+func WithConfig(config Config) func(*Server) {
+	return func(s *Server) {
+		s.config = config
+	}
 }
 
 func (s *Server) setLastError(err error) {
