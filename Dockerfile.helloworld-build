@@ -1,5 +1,5 @@
 # not pulling latest because there was a glibc issue when running the generated binary on DO
-FROM golang:1.21-bullseye
+FROM golang:1.23-bullseye
 
 WORKDIR /go/src/helloworld
 

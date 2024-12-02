@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"time"
 
 	"github.com/sethgrid/helloworld/logger"
 
@@ -17,9 +18,22 @@ type helloworldResp struct {
 }
 
 func (s *Server) helloworldHandler(w http.ResponseWriter, r *http.Request) {
-
-	// simulate some work
-	if err := RandomFailure(); err != nil {
+	// delay param can be any unit of time, e.g. 1s, 500ms, 1.5s
+	// if delay is provided, don't simulate a random failure
+	// else, simulate a random failure and pass additional info into the logger via kverr
+	if delay := r.URL.Query().Get("delay"); delay != "" {
+		duration, err := time.ParseDuration(delay)
+		if err != nil {
+			s.ErrorJSON(w, r, http.StatusBadRequest, "invalid delay", kverr.New(err, "delay", delay))
+			return
+		}
+		if duration > 10*time.Second {
+			duration = 10 * time.Second
+		} else if duration < 1*time.Millisecond {
+			duration = 1 * time.Millisecond
+		}
+		time.Sleep(duration)
+	} else if err := RandomFailure(); err != nil {
 		// NOTE: we don't have to tell other services that a kverr is being passed in
 		s.ErrorJSON(w, r, http.StatusInternalServerError, "random failure", err)
 		return

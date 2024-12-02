@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
@@ -10,14 +11,17 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/sethgrid/helloworld/events"
 	"github.com/sethgrid/helloworld/logger"
@@ -46,12 +50,14 @@ type Server struct {
 	addr       string
 	protocol   string
 
-	mu           sync.Mutex
-	started      bool
-	port         int
-	internalPort int
-	srvErr       error
-	inDebug      bool
+	mu                 sync.Mutex
+	started            bool
+	port               int
+	internalPort       int
+	srvErr             error
+	inDebug            bool
+	internalHTTPServer *http.Server
+	publicHTTPServer   *http.Server
 
 	parentLogger *slog.Logger
 }
@@ -109,18 +115,12 @@ func New(conf Config) (*Server, error) {
 	db.SetMaxIdleConns(0)
 	db.SetConnMaxIdleTime(time.Minute * 3)
 
-	for i := 0; i < 10; i++ {
-		rootLogger.Info("attempting db; if hanging for local dev, restart docker",
-			"repro", fmt.Sprintf("mysql --host=%s --port=%s -u%s -p --connect-timeout=10", conf.DBHost, conf.DBPort, conf.DBUser),
-		)
-		if err = db.Ping(); err != nil {
-			time.Sleep(time.Duration(i) * time.Second)
-			continue
+	if conf.RequireDBUp {
+		if err := pingDB(db, 10, conf, rootLogger); err != nil {
+			return nil, fmt.Errorf("unable to ping db: %w", err)
 		}
-		break
-	}
-	if err != nil {
-		return nil, fmt.Errorf("unable to ping db after several attempts: %w", err)
+	} else {
+		go pingDB(db, 10, conf, rootLogger)
 	}
 
 	if conf.ShouldSecure {
@@ -139,10 +139,61 @@ func New(conf Config) (*Server, error) {
 	}, nil
 }
 
-func (s *Server) Close() error {
-	// TODO - capture error group
-
+func pingDB(db *sql.DB, retryCount int, conf Config, logger *slog.Logger) error {
+	var err error
+	for i := 0; i < retryCount; i++ {
+		logger.Info("attempting db; if hanging for local dev, restart docker",
+			"repro", fmt.Sprintf("mysql --host=%s --port=%s -u%s -p --connect-timeout=10", conf.DBHost, conf.DBPort, conf.DBUser),
+		)
+		if err = db.Ping(); err != nil {
+			time.Sleep(time.Duration(i) * time.Second)
+			continue
+		}
+		break
+	}
+	if err != nil {
+		return fmt.Errorf("unable to ping db after several attempts: %w", err)
+	}
 	return nil
+}
+
+func (s *Server) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var g errgroup.Group
+
+	timeout := s.config.ShutdownTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if s.publicHTTPServer != nil {
+		// Launch a goroutine to close the public HTTP server
+		g.Go(func() error {
+			err := s.publicHTTPServer.Shutdown(ctx)
+			if err != nil {
+				s.parentLogger.Error("unable to close public http server", "error", err.Error())
+			}
+			return err
+		})
+	}
+
+	if s.internalHTTPServer != nil {
+		// Launch a goroutine to close the internal HTTP server
+		g.Go(func() error {
+			err := s.internalHTTPServer.Shutdown(ctx)
+			if err != nil {
+				s.parentLogger.Error("unable to close internal http server", "error", err.Error())
+			}
+			return err
+		})
+	}
+
+	// Wait for all goroutines to complete and return any error
+	return g.Wait()
 }
 
 func (s *Server) newRouter() *chi.Mux {
@@ -174,8 +225,7 @@ func customCORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handl
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", strings.Join([]string{
 				"Accept", "Authorization", "Content-Type", "X-CSRF-Token",
-				"Accept-Language", "Hx-Current-Url", "Hx-Request", "Hx-Target",
-				"Hx-Trigger", "Referer", "User-Agent",
+				"Accept-Language", "Referer", "User-Agent",
 			}, ","))
 			w.Header().Set("Access-Control-Expose-Headers", "Link")
 			w.Header().Set("Access-Control-Max-Age", "300")
@@ -206,7 +256,7 @@ func (s *Server) Serve() error {
 	})
 
 	// all application routes should be defined below
-	router := s.newRouter().With(s.loggerMiddleware)
+	router := s.newRouter()
 
 	// if routes require authentication, use a new With or add it above as a separate middleware
 	// router.Get("/", s.uiIndex)
@@ -250,6 +300,7 @@ func (s *Server) Serve() error {
 			}
 
 			s.mu.Lock()
+			s.internalHTTPServer = &internalHTTP
 			s.internalPort = l.Addr().(*net.TCPAddr).Port
 			s.parentLogger.Info("starting http internal listener", "port", s.internalPort)
 			s.mu.Unlock()
@@ -273,6 +324,22 @@ func (s *Server) Serve() error {
 		ReadHeaderTimeout: 2 * time.Second,
 		Handler:           router,
 	}
+
+	s.mu.Lock()
+	s.publicHTTPServer = &publicHTTP
+	s.mu.Unlock()
+
+	// Graceful shutdown on signals
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-quit
+		s.parentLogger.Info("shutdown signal received, shutting down gracefully...")
+		if err := s.Close(); err != nil {
+			s.parentLogger.Error("error during shutdown", "error", err.Error())
+		}
+	}()
 
 	// blocking
 	if err := publicHTTP.Serve(listener); err != nil {
