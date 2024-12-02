@@ -24,7 +24,7 @@ func launchOrGetTestServer(t *testing.T) (theURL string, logs bytes.Buffer, clos
 		return fmt.Sprintf("http://%s:%s", host, os.Getenv("PORT")), logs, func() error { return nil }
 	}
 
-	srv, err := newTestServer(&logs)
+	srv, err := newTestServer(WithLogbuf(&logs))
 	require.NoError(t, err)
 	return fmt.Sprintf("http://localhost:%d", srv.Port()), logs, srv.Close
 }
