@@ -1,4 +1,4 @@
-FROM golang:1.21-bullseye
+FROM golang:1.23-bullseye
 
 # NOTE: this must contain 'helloworld' to match the value in getRootDir() otherwise we can't fetch templates and stuff
 WORKDIR /go/src/helloworld
