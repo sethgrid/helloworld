@@ -33,7 +33,7 @@ func TestEventStoreErr(t *testing.T) {
 	require.NoError(t, err)
 	defer srv.Close()
 
-	// replacet the event store
+	// replace the event store
 	srv.eventStore = &fakeEventStore{err: fmt.Errorf("oh noes, mysql err")}
 
 	err = srv.DoSomethingWithEvents()
@@ -42,6 +42,37 @@ func TestEventStoreErr(t *testing.T) {
 	assert.Contains(t, err.Error(), "oh noes, mysql err")
 
 	require.Contains(t, logbuf.String(), "oh noes, mysql err")
+}
+
+func TestGracefulShutdown(t *testing.T) {
+	srv, err := newTestServer()
+	require.NoError(t, err)
+
+	wg := sync.WaitGroup{}
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			source := fmt.Sprintf("http://localhost:%d/?delay=1s", srv.Port())
+			resp, err := http.Get(source)
+			require.NoError(t, err)
+			assert.Equal(t, resp.StatusCode, http.StatusOK, "source: %s", source)
+			wg.Done()
+		}()
+	}
+
+	// give time for all requests to go out
+	// todo: instead of sleeping in tests, use the metrics endpoint to show inflight request
+	time.Sleep(100 * time.Millisecond)
+
+	err = srv.Close()
+	require.NoError(t, err)
+
+	_, err = http.Get(fmt.Sprintf("http://localhost:%d/?delay=1s", srv.Port()))
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "connection refused")
+	// make sure that all requests have successfully completed
+	wg.Wait()
 }
 
 // newTestServer is generally called with no parameter. A bit of a hack on variadics, but if you want to pass in a buffer, pass one in.

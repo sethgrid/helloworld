@@ -17,6 +17,7 @@ type Config struct {
 	DBName       string `default:"helloworld" envconfig:"db_name"`
 	DBPort       string `default:"3306" envconfig:"db_port"`
 	DBCACertPath string `default:"/home/seth/ca-certificate.crt" evnconfig:"cert_path"`
+	RequireDBUp  bool   `default:"false" envconfig:"require_db_up"`
 
 	// Hostname binds to all interfaces so docker services can connect to this server outside of docker
 	Hostname          string        `default:"0.0.0.0" envconfig:"hostname"`
@@ -26,6 +27,7 @@ type Config struct {
 	ShouldSecure      bool          `default:"false" envconfig:"should_secure"`
 	EnableDebug       bool          `default:"true" envconfig:"enable_debug"`
 	TaskExpiration    time.Duration `default:"1m" envconfig:"task_expiration"`
+	ShutdownTimeout   time.Duration `default:"30s" envconfig:"shutdown_timeout"`
 
 	SGAPIKey string `default:"" envconfig:"sendgrid_apikey"`
 
