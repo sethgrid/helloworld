@@ -2,3 +2,4 @@ bin/*
 settings.env
 logs/*
 docker-configs/loki/*
+.DS_Store

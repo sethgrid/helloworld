@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,12 +28,20 @@ func (s *Server) helloworldHandler(w http.ResponseWriter, r *http.Request) {
 			s.ErrorJSON(w, r, http.StatusBadRequest, "invalid delay", kverr.New(err, "delay", delay))
 			return
 		}
-		if duration > 10*time.Second {
-			duration = 10 * time.Second
+		if duration > 90*time.Second {
+			logger.FromRequest(r).Error("delay too long", "duration", duration.String())
+			duration = 1 * time.Millisecond
 		} else if duration < 1*time.Millisecond {
 			duration = 1 * time.Millisecond
 		}
 		time.Sleep(duration)
+
+		err = someWorkThatChecksContextDeadline(r.Context())
+		if err != nil {
+			s.ErrorJSON(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
+			return
+		}
+
 	} else if err := RandomFailure(); err != nil {
 		// NOTE: we don't have to tell other services that a kverr is being passed in
 		s.ErrorJSON(w, r, http.StatusInternalServerError, "random failure", err)
@@ -52,6 +61,22 @@ func RandomFailure() error {
 		// NOTE: the key value pair "val":val will be available to the server error logs
 		return kverr.New(errors.New("operation failed"), "val", val)
 	}
+	return nil
+}
+
+// someWorkThatChecksContextDeadline is a demo showing how to check if the context is canceled
+func someWorkThatChecksContextDeadline(ctx context.Context) error {
+	// Check if the context is canceled
+	select {
+	case <-ctx.Done():
+		// Context is canceled
+		return kverr.New(fmt.Errorf("context canceled"), "context_err", ctx.Err())
+	default:
+		// Context is still active
+	}
+
+	// Do whatever work you need to do
+
 	return nil
 }
 

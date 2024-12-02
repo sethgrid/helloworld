@@ -109,7 +109,6 @@ func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) h
 
 			start := time.Now()
 			metrics.InFlightGauge.Inc()
-			logger.Error("should increment flight gauge")
 
 			defer func() {
 				metrics.InFlightGauge.Dec()

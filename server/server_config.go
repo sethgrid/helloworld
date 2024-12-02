@@ -28,6 +28,7 @@ type Config struct {
 	EnableDebug       bool          `default:"true" envconfig:"enable_debug"`
 	TaskExpiration    time.Duration `default:"1m" envconfig:"task_expiration"`
 	ShutdownTimeout   time.Duration `default:"30s" envconfig:"shutdown_timeout"`
+	RequestTimeout    time.Duration `default:"30s" envconfig:"shutdown_timeout"`
 
 	SGAPIKey string `default:"" envconfig:"sendgrid_apikey"`
 
