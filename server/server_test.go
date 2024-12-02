@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -48,8 +51,10 @@ func TestGracefulShutdown(t *testing.T) {
 	srv, err := newTestServer()
 	require.NoError(t, err)
 
+	concurrentRequests := 10
+
 	wg := sync.WaitGroup{}
-	for i := 0; i < 3; i++ {
+	for i := 0; i < concurrentRequests; i++ {
 		wg.Add(1)
 		go func() {
 			source := fmt.Sprintf("http://localhost:%d/?delay=1s", srv.Port())
@@ -61,8 +66,10 @@ func TestGracefulShutdown(t *testing.T) {
 	}
 
 	// give time for all requests to go out
-	// todo: instead of sleeping in tests, use the metrics endpoint to show inflight request
-	time.Sleep(100 * time.Millisecond)
+	// note: avoid sleeping in tests. To keep tests fast, poll for the expected state or event over a channel
+	// AVOID: time.Sleep(1000 * time.Millisecond)
+	// ATTEMPT: poll for the expected state
+	assertMetric(t, srv, "http_in_flight_requests", float64(concurrentRequests), 2*time.Second)
 
 	err = srv.Close()
 	require.NoError(t, err)
@@ -73,6 +80,74 @@ func TestGracefulShutdown(t *testing.T) {
 	assert.Contains(t, err.Error(), "connection refused")
 	// make sure that all requests have successfully completed
 	wg.Wait()
+}
+
+func assertMetric(t *testing.T, srv *Server, metric string, target float64, timeout time.Duration) {
+	start := time.Now()
+	for {
+		value, err := getMetric(srv, metric)
+		if err == nil && value == target {
+			return
+		} else if err != nil {
+			t.Errorf("error fetching metric: %v", err)
+			return
+		}
+
+		fmt.Printf("waiting for metric %s to reach %f, currently at %f\n", metric, target, value)
+
+		// Check if timeout has been reached
+		if time.Since(start) >= timeout {
+			t.Errorf("timeout reached before target metric value was reached: %s=%f, got %s=%f", metric, target, metric, value)
+			return
+		}
+
+		// Wait for the next interval
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func getMetric(srv *Server, metric string) (float64, error) {
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/metrics", srv.InternalPort()))
+	if err != nil {
+		return 0, err
+	}
+
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(resp.Body)
+	resp.Body.Close()
+
+	return findMetricValue(buf, metric)
+}
+
+// findMetricValue parses the metrics data and retrieves the number from the first line with the given prefix.
+func findMetricValue(metrics *bytes.Buffer, prefix string) (float64, error) {
+	scanner := bufio.NewScanner(metrics)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Skip comment lines
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Check if the line starts with the desired prefix
+		if strings.HasPrefix(line, prefix) {
+			// Split the line into the metric name and value
+			parts := strings.Fields(line)
+			if len(parts) < 2 {
+				return 0, fmt.Errorf("malformed metric line: %s", line)
+			}
+			// Convert the value to a float
+			value, err := strconv.ParseFloat(parts[1], 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid metric value: %v", err)
+			}
+			return value, nil
+		}
+	}
+	// Return an error if no matching prefix was found
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("error reading metrics: %v", err)
+	}
+	return 0, fmt.Errorf("metric with prefix '%s' not found", prefix)
 }
 
 // newTestServer is generally called with no parameter. A bit of a hack on variadics, but if you want to pass in a buffer, pass one in.

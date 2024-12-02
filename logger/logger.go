@@ -109,6 +109,7 @@ func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) h
 
 			start := time.Now()
 			metrics.InFlightGauge.Inc()
+			logger.Error("should increment flight gauge")
 
 			defer func() {
 				metrics.InFlightGauge.Dec()
@@ -124,14 +125,17 @@ func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) h
 
 				metrics.RequestCount.With(prometheus.Labels{"method": r.Method, "endpoint": path}).Inc()
 				metrics.RequestDuration.With(prometheus.Labels{"method": r.Method, "endpoint": path}).Observe(duration.Seconds())
-				logger.Info("route",
-					"path", path,
-					"verb", r.Method,
-					"status", http.StatusText(ww.Status()),
-					"code", ww.Status(),
-					"bytes", ww.BytesWritten(),
-					"duration_ms", duration.Milliseconds(),
-				)
+
+				if shouldPrint {
+					logger.Info("route",
+						"path", path,
+						"verb", r.Method,
+						"status", http.StatusText(ww.Status()),
+						"code", ww.Status(),
+						"bytes", ww.BytesWritten(),
+						"duration_ms", duration.Milliseconds(),
+					)
+				}
 			}()
 
 			next.ServeHTTP(ww, r)

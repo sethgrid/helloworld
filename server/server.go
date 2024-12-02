@@ -223,8 +223,7 @@ func customCORSMiddleware(allowedOrigins []string) func(http.Handler) http.Handl
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", strings.Join([]string{
 				"Accept", "Authorization", "Content-Type", "X-CSRF-Token",
-				"Accept-Language", "Hx-Current-Url", "Hx-Request", "Hx-Target",
-				"Hx-Trigger", "Referer", "User-Agent",
+				"Accept-Language", "Referer", "User-Agent",
 			}, ","))
 			w.Header().Set("Access-Control-Expose-Headers", "Link")
 			w.Header().Set("Access-Control-Max-Age", "300")
@@ -255,7 +254,7 @@ func (s *Server) Serve() error {
 	})
 
 	// all application routes should be defined below
-	router := s.newRouter().With(s.loggerMiddleware)
+	router := s.newRouter()
 
 	// if routes require authentication, use a new With or add it above as a separate middleware
 	// router.Get("/", s.uiIndex)
