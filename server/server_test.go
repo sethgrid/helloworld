@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sethgrid/helloworld/logger/lockbuffer"
 	"github.com/sethgrid/helloworld/taskqueue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,9 +31,9 @@ func TestHealthcheck(t *testing.T) {
 }
 
 func TestEventStoreErr(t *testing.T) {
-	var logbuf bytes.Buffer
+	logbuf := lockbuffer.NewLockBuffer()
 
-	srv, err := newTestServer(&logbuf)
+	srv, err := newTestServer(WithLogWriter(logbuf))
 	require.NoError(t, err)
 	defer srv.Close()
 
@@ -80,6 +81,24 @@ func TestGracefulShutdown(t *testing.T) {
 	assert.Contains(t, err.Error(), "connection refused")
 	// make sure that all requests have successfully completed
 	wg.Wait()
+}
+
+func TestContextTimeoutAndRequestTimeout(t *testing.T) {
+	logbuf := lockbuffer.NewLockBuffer()
+	customConfig := Config{
+		// server kills any request that takes longer than this
+		RequestTimeout: 100 * time.Millisecond,
+	}
+
+	srv, err := newTestServer(WithConfig(customConfig), WithLogWriter(logbuf))
+	require.NoError(t, err)
+
+	source := fmt.Sprintf("http://localhost:%d/?delay=101ms", srv.Port())
+	_, err = http.Get(source)
+	require.Error(t, err)
+
+	assert.Contains(t, logbuf.String(), `"error":"context canceled"`)
+
 }
 
 func assertMetric(t *testing.T, srv *Server, metric string, target float64, timeout time.Duration) {
@@ -150,35 +169,50 @@ func findMetricValue(metrics *bytes.Buffer, prefix string) (float64, error) {
 	return 0, fmt.Errorf("metric with prefix '%s' not found", prefix)
 }
 
-// newTestServer is generally called with no parameter. A bit of a hack on variadics, but if you want to pass in a buffer, pass one in.
-// var buf bytes.Buffer
-// newTestServer(buf)
-// and later: buf.String()
-// NOTE: currently the task runner uses a default user store. if the server is using a custom user store it wont be related.
-// TODO: consider using functional options for logger, stores, and mailer err
-func newTestServer(logWriter ...io.Writer) (*Server, error) {
+// newTestServer is generally called with no parameter, but can be called with optional logger or config overrides
+/*
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	customConfig := Config{
+		ShutdownTimeout: 5 * time.Second,
+		RequestTimeout:  10 * time.Second,
+	}
+	srv, err := newTestServer(WithLogger(logger), WithConfig(customConfig))
+	if err != nil {
+		log.Fatal(err)
+	}
+*/
+func newTestServer(opts ...func(*Server)) (*Server, error) {
+	// Default writer for the logger
 	writer := io.Discard
-	if len(logWriter) == 1 {
-		writer = logWriter[0]
+	log := slog.New(slog.NewJSONHandler(writer, nil))
+
+	// Default configuration
+	defaultConfig := Config{
+		ShutdownTimeout: 3 * time.Second,
+		RequestTimeout:  3 * time.Second,
 	}
 
-	log := slog.New(slog.NewJSONHandler(writer, nil))
+	// Initialize task queue
 	q := taskqueue.NewInMemoryTaskQueue(1, 15*time.Second, log)
 
+	// Create server with default values
 	srv := &Server{
-		// port explicitly set to zero.
-		// this means that the OS will bind a random available port.
-		// During testing, this means we can spin up multiple servers with no port collision.
-		port:         0,
+		port:         0, // OS will bind a random available port
+		config:       defaultConfig,
 		internalPort: 0,
 		protocol:     "http://",
 		taskq:        q,
 		parentLogger: log,
 		eventStore:   &fakeEventStore{},
-
-		mu: sync.Mutex{},
+		mu:           sync.Mutex{},
 	}
 
+	// Apply optional arguments
+	for _, opt := range opts {
+		opt(srv)
+	}
+
+	// Start server
 	go srv.Serve()
 
 	port := srv.Port()
@@ -196,10 +230,9 @@ func newTestServer(logWriter ...io.Writer) (*Server, error) {
 
 	srv.addr = fmt.Sprintf("localhost:%d", port)
 
-	taskqueue.NewRunner(srv.taskq, 1, log, 75*time.Millisecond)
+	taskqueue.NewRunner(srv.taskq, 1, srv.parentLogger, 75*time.Millisecond)
 
 	return srv, nil
-
 }
 
 type fakeEventStore struct {

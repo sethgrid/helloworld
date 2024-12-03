@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -210,9 +211,9 @@ func (s *Server) newRouter() *chi.Mux {
 	router.Use(customCORSMiddleware(origins))
 
 	router.Use(middleware.RealIP)
+	router.Use(timeoutMiddleware(s.config.RequestTimeout))
 	router.Use(logger.Middleware(s.parentLogger, s.inDebug))
 	router.Use(middleware.Recoverer)
-	router.Use(middleware.Timeout(60 * time.Second))
 
 	return router
 }
@@ -283,10 +284,10 @@ func (s *Server) Serve() error {
 
 	go func() {
 		internalHTTP := http.Server{
-			ReadTimeout:       10 * time.Second,
-			WriteTimeout:      10 * time.Second,
-			IdleTimeout:       30 * time.Second,
-			ReadHeaderTimeout: 2 * time.Second,
+			ReadTimeout:       s.config.RequestTimeout,
+			WriteTimeout:      s.config.RequestTimeout,
+			IdleTimeout:       s.config.RequestTimeout,
+			ReadHeaderTimeout: s.config.RequestTimeout,
 			Handler:           privateRouter,
 		}
 
@@ -318,10 +319,10 @@ func (s *Server) Serve() error {
 	go runner.Start()
 
 	publicHTTP := http.Server{
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       30 * time.Second,
-		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       s.config.RequestTimeout,
+		WriteTimeout:      s.config.RequestTimeout,
+		IdleTimeout:       s.config.RequestTimeout,
+		ReadHeaderTimeout: s.config.RequestTimeout,
 		Handler:           router,
 	}
 
@@ -349,6 +350,32 @@ func (s *Server) Serve() error {
 	}
 
 	return nil
+}
+
+// WithLogWriter is a test helper for server configuration to override logger's writer.
+// Typically used with the lockbuffer package for testing, allowing concurrent reads and writes,
+// preventing races in the test suite.
+func WithLogWriter(w io.Writer) func(*Server) {
+	return func(s *Server) {
+		logger := slog.New(slog.NewJSONHandler(w, nil))
+		s.parentLogger = logger
+		s.taskq = taskqueue.NewInMemoryTaskQueue(1, 15*time.Second, logger)
+	}
+}
+
+// WithLogger is a test helper for server configuration to override logger
+func WithLogger(logger *slog.Logger) func(*Server) {
+	return func(s *Server) {
+		s.parentLogger = logger
+		s.taskq = taskqueue.NewInMemoryTaskQueue(1, 15*time.Second, logger)
+	}
+}
+
+// WithConfig is a test helper for overwriting server configuration
+func WithConfig(config Config) func(*Server) {
+	return func(s *Server) {
+		s.config = config
+	}
 }
 
 func (s *Server) setLastError(err error) {
@@ -405,15 +432,13 @@ func (s *Server) LastError() error {
 	return s.srvErr
 }
 
-func (s *Server) loggerMiddleware(next http.Handler) http.Handler {
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		// create an instance of the logger bound to this single request
-		// if we change rid, also change rid's backup init in GetLoggerFromRequest
-		_, _, r = logger.NewRequestLogger(ctx, r, s.parentLogger)
-
-		next.ServeHTTP(w, r)
+func timeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
+			// Pass the new context to the next handler
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}
-
-	return http.HandlerFunc(fn)
 }
