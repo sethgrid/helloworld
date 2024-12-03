@@ -4,7 +4,6 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -16,7 +15,7 @@ import (
 
 // launchOrGetTestServer will try to run in a faked test server or will connect to the configured
 // HOST_ADDR and PORT
-func launchOrGetTestServer(t *testing.T) (theURL string, logs lockbuffer.LockBuffer, closefn func() error) {
+func launchOrGetTestServer(t *testing.T) (theURL string, logs *lockbuffer.LockBuffer, closefn func() error) {
 	logs = lockbuffer.NewLockBuffer()
 	if os.Getenv("USE_LOCAL_helloworld") != "" {
 		host := os.Getenv("HOST_ADDR")
@@ -40,12 +39,12 @@ func TestSomething(t *testing.T) {
 	defer dumpLogsOnFailure(t, logs)
 
 	// call the server at theURL. Inspect logs.
-	fmt.Sprintf(theURL)
-	fmt.Sprintf(logs.String())
+	fmt.Printf(theURL)
+	fmt.Printf(logs.String())
 
 }
 
-func dumpLogsOnFailure(t *testing.T, logBuf bytes.Buffer) {
+func dumpLogsOnFailure(t *testing.T, logBuf *lockbuffer.LockBuffer) {
 	if t.Failed() {
 		fmt.Printf("\nServer Log Dump:\n%s\n", logBuf.String())
 	}
