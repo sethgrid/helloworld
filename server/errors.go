@@ -16,7 +16,7 @@ type errorResp struct {
 func (s *Server) ErrorJSON(w http.ResponseWriter, r *http.Request, statusCode int, userMsg string, err error) {
 	// NOTE: if this was a kverr, those key:value pairs will be pulled out and attached to our error log here
 	logger := logger.FromRequest(r).With("status_code", statusCode).With(kverr.YoinkArgs(err)...)
-	defer logger.Error(userMsg, "error", err.Error())
+	logger.Error(userMsg, "error", err.Error())
 
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(statusCode)

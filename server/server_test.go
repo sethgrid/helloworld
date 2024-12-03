@@ -95,6 +95,9 @@ func TestContextTimeoutAndRequestTimeout(t *testing.T) {
 	source := fmt.Sprintf("http://localhost:%d/?delay=101ms", srv.Port())
 	_, err = http.Get(source)
 	require.Error(t, err)
+
+	// close the server to prevent concurrent writes to the log buffer so we can assert on it
+	assert.NoError(t, srv.Close())
 	assert.Contains(t, logbuf.String(), `"error":"context canceled"`)
 
 }
