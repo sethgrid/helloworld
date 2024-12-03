@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sethgrid/helloworld/logger/lockbuffer"
 	"github.com/sethgrid/helloworld/taskqueue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,9 +31,9 @@ func TestHealthcheck(t *testing.T) {
 }
 
 func TestEventStoreErr(t *testing.T) {
-	var logbuf bytes.Buffer
+	logbuf := lockbuffer.NewLockBuffer()
 
-	srv, err := newTestServer(WithLogbuf(&logbuf))
+	srv, err := newTestServer(WithLogWriter(logbuf))
 	require.NoError(t, err)
 	defer srv.Close()
 
@@ -83,21 +84,19 @@ func TestGracefulShutdown(t *testing.T) {
 }
 
 func TestContextTimeoutAndRequestTimeout(t *testing.T) {
-	var logbuf bytes.Buffer
+	logbuf := lockbuffer.NewLockBuffer()
 	customConfig := Config{
 		// server kills any request that takes longer than this
 		RequestTimeout: 100 * time.Millisecond,
 	}
 
-	srv, err := newTestServer(WithConfig(customConfig), WithLogbuf(&logbuf))
+	srv, err := newTestServer(WithConfig(customConfig), WithLogWriter(logbuf))
 	require.NoError(t, err)
 
 	source := fmt.Sprintf("http://localhost:%d/?delay=101ms", srv.Port())
 	_, err = http.Get(source)
 	require.Error(t, err)
 
-	// close the server to prevent concurrent writes to the log buffer so we can assert on it
-	assert.NoError(t, srv.Close())
 	assert.Contains(t, logbuf.String(), `"error":"context canceled"`)
 
 }

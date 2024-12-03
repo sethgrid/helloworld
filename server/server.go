@@ -1,12 +1,12 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -352,10 +352,12 @@ func (s *Server) Serve() error {
 	return nil
 }
 
-// WithLogbuf is a test helper for server configuration to override logger's buffer
-func WithLogbuf(buf *bytes.Buffer) func(*Server) {
+// WithLogWriter is a test helper for server configuration to override logger's writer.
+// Typically used with the lockbuffer package for testing, allowing concurrent reads and writes,
+// preventing races in the test suite.
+func WithLogWriter(w io.Writer) func(*Server) {
 	return func(s *Server) {
-		logger := slog.New(slog.NewJSONHandler(buf, nil))
+		logger := slog.New(slog.NewJSONHandler(w, nil))
 		s.parentLogger = logger
 		s.taskq = taskqueue.NewInMemoryTaskQueue(1, 15*time.Second, logger)
 	}
