@@ -10,12 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sethgrid/helloworld/logger/lockbuffer"
 	"github.com/stretchr/testify/require"
 )
 
 // launchOrGetTestServer will try to run in a faked test server or will connect to the configured
 // HOST_ADDR and PORT
-func launchOrGetTestServer(t *testing.T) (theURL string, logs bytes.Buffer, closefn func() error) {
+func launchOrGetTestServer(t *testing.T) (theURL string, logs lockbuffer.LockBuffer, closefn func() error) {
+	logs = lockbuffer.NewLockBuffer()
 	if os.Getenv("USE_LOCAL_helloworld") != "" {
 		host := os.Getenv("HOST_ADDR")
 		if strings.Contains(host, "helloworld.com") {
@@ -24,7 +26,7 @@ func launchOrGetTestServer(t *testing.T) (theURL string, logs bytes.Buffer, clos
 		return fmt.Sprintf("http://%s:%s", host, os.Getenv("PORT")), logs, func() error { return nil }
 	}
 
-	srv, err := newTestServer(WithLogbuf(&logs))
+	srv, err := newTestServer(WithLogWriter(logs))
 	require.NoError(t, err)
 	return fmt.Sprintf("http://localhost:%d", srv.Port()), logs, srv.Close
 }
