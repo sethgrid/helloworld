@@ -193,6 +193,17 @@ func (s *Server) Close() error {
 		})
 	}
 
+	if s.eventStore != nil {
+		// Launch a goroutine to close the event store
+		g.Go(func() error {
+			err := s.eventStore.Close()
+			if err != nil {
+				s.parentLogger.Error("unable to close event store", "error", err.Error())
+			}
+			return err
+		})
+	}
+
 	// Wait for all goroutines to complete and return any error
 	return g.Wait()
 }
