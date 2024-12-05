@@ -48,7 +48,7 @@ func TestEventStoreErr(t *testing.T) {
 	require.Contains(t, logbuf.String(), "oh noes, mysql err")
 }
 
-func TestGracefulShutdown(t *testing.T) {
+func TestGracefulShutdownOK(t *testing.T) {
 	srv, err := newTestServer()
 	require.NoError(t, err)
 
@@ -81,6 +81,20 @@ func TestGracefulShutdown(t *testing.T) {
 	assert.Contains(t, err.Error(), "connection refused")
 	// make sure that all requests have successfully completed
 	wg.Wait()
+}
+
+func TestGracefulShutdownErr(t *testing.T) {
+	logbuf := lockbuffer.NewLockBuffer()
+
+	srv, err := newTestServer(WithLogWriter(logbuf))
+	require.NoError(t, err)
+
+	srv.eventStore = &fakeEventStore{err: fmt.Errorf("oh noes, close err")}
+
+	err = srv.Close()
+	require.Error(t, err)
+	assert.Contains(t, logbuf.String(), `"error":"oh noes, close err"`)
+	assert.Contains(t, logbuf.String(), `"msg":"unable to close event store"`)
 }
 
 func TestContextTimeoutAndRequestTimeout(t *testing.T) {
@@ -244,5 +258,5 @@ func (f *fakeEventStore) Write(userID int64, message string) error {
 }
 
 func (f *fakeEventStore) Close() error {
-	return nil
+	return f.err
 }
