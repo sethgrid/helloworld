@@ -20,6 +20,7 @@ jobs:
       - name: Check if VERSION file was changed
         id: check_version
         run: |
+          set +e  # Don't exit on error for grep
           # For pull requests, compare against the base branch (master or main)
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
@@ -92,27 +93,39 @@ jobs:
           fi
           
           # Check if VERSION file is in the list of changed files
-          # For PRs, use three-dot notation to compare from merge-base
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            # Use three-dot notation: compares from merge-base of BASE and HEAD_SHA
-            # This shows all changes in the PR branch compared to the base branch
-            CHANGED_FILES=$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA" 2>&1)
-            echo "Changed files (using three-dot diff from $BASE_SHA...$HEAD_SHA):"
-          else
-            # For pushes, use two-dot notation
-            CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>&1)
-            echo "Changed files between $BASE_SHA and $HEAD_SHA:"
+          # Use two-dot notation for simplicity and reliability
+          set +e  # Don't exit on error, we'll check the exit code
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>&1)
+          DIFF_EXIT_CODE=$?
+          set -e  # Re-enable exit on error
+          
+          if [ $DIFF_EXIT_CODE -ne 0 ]; then
+            echo "::error::git diff failed with exit code $DIFF_EXIT_CODE"
+            echo "BASE_SHA: $BASE_SHA"
+            echo "HEAD_SHA: $HEAD_SHA"
+            echo "Error output: $CHANGED_FILES"
+            exit 1
           fi
+          
+          echo "Changed files between $BASE_SHA and $HEAD_SHA:"
           echo "$CHANGED_FILES"
           
-          if echo "$CHANGED_FILES" | grep -q "^VERSION$"; then
+          # Check if VERSION is in the changed files (exact match on whole line)
+          set +e  # Don't exit on error for grep
+          echo "$CHANGED_FILES" | grep -q "^VERSION$"
+          VERSION_FOUND=$?
+          set -e  # Re-enable exit on error
+          
+          if [ $VERSION_FOUND -eq 0 ]; then
             echo "changed=true" >> $GITHUB_OUTPUT
             echo "✅ VERSION file has been updated"
           else
             echo "changed=false" >> $GITHUB_OUTPUT
             echo "❌ VERSION file has NOT been updated"
             echo "Looking for VERSION in changed files..."
+            set +e
             echo "$CHANGED_FILES" | grep -i version || echo "No VERSION found in changed files"
+            set -e
           fi
 
       - name: Fail if VERSION not changed
