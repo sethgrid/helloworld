@@ -230,8 +230,16 @@ func (s *Server) Close() error {
 		})
 	}
 
-	// Wait for all goroutines to complete and return any error
-	return g.Wait()
+	// Wait for all goroutines to complete
+	// errgroup.Wait() returns the first non-nil error, but we want to collect all errors
+	// for better observability. However, errgroup doesn't support collecting all errors,
+	// so we log each error as it occurs and return the first error encountered.
+	err := g.Wait()
+	if err != nil {
+		// Additional errors have already been logged by individual goroutines
+		return fmt.Errorf("shutdown completed with errors: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) newRouter() *chi.Mux {
