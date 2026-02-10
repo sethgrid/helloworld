@@ -52,3 +52,16 @@ func (evt *UserEvent) Write(userID int64, message string) error {
 	evt.logger.Info("writing event message", "user_id", userID, "msg", message)
 	return nil
 }
+
+// IsAvailable pings the database to check if the event store is available.
+// Returns true if the ping succeeds, false otherwise.
+func (evt *UserEvent) IsAvailable() bool {
+	if evt.db == nil {
+		return false
+	}
+	if err := evt.db.Ping(); err != nil {
+		evt.logger.Debug("event store unavailable", "error", err.Error())
+		return false
+	}
+	return true
+}

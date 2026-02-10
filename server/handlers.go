@@ -16,13 +16,15 @@ import (
 )
 
 type helloworldResp struct {
-	Hello string `json:"hello"`
+	Hello               string `json:"hello"`
+	EventStoreAvailable bool   `json:"event_store_available"`
+	EventStoreMessage   string `json:"event_store_message"`
 }
 
 // handleHelloworld is a standalone handler function that receives dependencies via closure.
 // Following modern Go patterns, handlers are not methods on the Server struct.
 // The logger is injected via middleware and accessed through the request context.
-func handleHelloworld() http.HandlerFunc {
+func handleHelloworld(eventStore eventWriter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// delay param can be any unit of time, e.g. 1s, 500ms, 1.5s
 		// if delay is provided, don't simulate a random failure
@@ -53,7 +55,18 @@ func handleHelloworld() http.HandlerFunc {
 			return
 		}
 
-		resp := helloworldResp{Hello: "World!"}
+		// Check event store availability
+		eventStoreAvailable := eventStore.IsAvailable()
+		eventStoreMessage := "Event store is available"
+		if !eventStoreAvailable {
+			eventStoreMessage = "Event store is not available"
+		}
+
+		resp := helloworldResp{
+			Hello:               "World!",
+			EventStoreAvailable: eventStoreAvailable,
+			EventStoreMessage:   eventStoreMessage,
+		}
 
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			logger.FromRequest(r).Error("unable to encode json", "error", err.Error())

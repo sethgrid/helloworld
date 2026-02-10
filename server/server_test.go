@@ -251,7 +251,8 @@ func newTestServer(opts ...func(*Server)) (*Server, error) {
 }
 
 type fakeEventStore struct {
-	err error
+	err       error
+	available bool
 }
 
 func (f *fakeEventStore) Write(userID int64, message string) error {
@@ -260,4 +261,8 @@ func (f *fakeEventStore) Write(userID int64, message string) error {
 
 func (f *fakeEventStore) Close() error {
 	return f.err
+}
+
+func (f *fakeEventStore) IsAvailable() bool {
+	return f.available
 }

@@ -42,6 +42,7 @@ var ctxUser contextKey = "user"
 type eventWriter interface {
 	Write(userID int64, message string) error
 	Close() error
+	IsAvailable() bool
 }
 
 type Server struct {
@@ -274,7 +275,7 @@ func (s *Server) Serve() error {
 	// router.Get("/", s.uiIndex)
 	// Handlers receive dependencies at route definition time, following modern Go patterns.
 	// Logger is injected via middleware and accessed through request context.
-	router.Get("/", handleHelloworld())
+	router.Get("/", handleHelloworld(s.eventStore))
 
 	// normally we use a defer for unlocking
 	// we are not doing that here because http.Serve below is a blocking call
