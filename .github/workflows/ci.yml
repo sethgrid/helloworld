@@ -19,10 +19,32 @@ jobs:
       - name: Check if VERSION file was changed
         id: check_version
         run: |
-          # For pull requests, compare against the base branch
+          # For pull requests, compare against the base branch (master or main)
           if [ "${{ github.event_name }}" == "pull_request" ]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            
+            # Fetch all branches to ensure we have the base branch
+            git fetch origin --depth=1
+            
+            # Determine the base branch SHA - use the base branch from the PR, or fallback to master/main
+            BASE_SHA="origin/$BASE_BRANCH"
+            
+            # If the PR's base branch doesn't exist, try master then main
+            if ! git rev-parse --verify "$BASE_SHA" >/dev/null 2>&1; then
+              if git rev-parse --verify "origin/master" >/dev/null 2>&1; then
+                BASE_SHA="origin/master"
+                echo "Using origin/master as base branch"
+              elif git rev-parse --verify "origin/main" >/dev/null 2>&1; then
+                BASE_SHA="origin/main"
+                echo "Using origin/main as base branch"
+              else
+                echo "::error::Could not find base branch (master or main)"
+                exit 1
+              fi
+            else
+              echo "Using origin/$BASE_BRANCH as base branch"
+            fi
           else
             # For pushes, compare against the previous commit
             # If before is empty (first commit), compare against HEAD~1 or allow if it's the initial commit
