@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/sethgrid/helloworld/metrics"
 	"github.com/sethgrid/kverr"
 )
 
@@ -17,11 +18,37 @@ type MySQLTaskQueue struct {
 }
 
 func NewMySQLTaskQueue(db *sql.DB, logger *slog.Logger, retryLimit int, itemExpiration time.Duration) *MySQLTaskQueue {
-	return &MySQLTaskQueue{
+	mq := &MySQLTaskQueue{
 		DB:              db,
 		Logger:          logger,
 		RetryLimit:      retryLimit,
 		ReCheckoutAfter: itemExpiration,
+	}
+	// Start metrics collection for this task queue's database connection
+	go mq.collectMetrics()
+	return mq
+}
+
+// collectMetrics periodically updates Prometheus metrics from database connection pool stats
+func (m *MySQLTaskQueue) collectMetrics() {
+	if m.DB == nil {
+		return
+	}
+	const storeLabel = "taskqueue"
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			stats := m.DB.Stats()
+			metrics.DBConnectionsOpen.WithLabelValues(storeLabel).Set(float64(stats.OpenConnections))
+			metrics.DBConnectionsIdle.WithLabelValues(storeLabel).Set(float64(stats.Idle))
+			metrics.DBConnectionsInUse.WithLabelValues(storeLabel).Set(float64(stats.InUse))
+			metrics.DBConnectionsWaitCount.WithLabelValues(storeLabel).Add(float64(stats.WaitCount))
+			metrics.DBConnectionsWaitDuration.WithLabelValues(storeLabel).Add(stats.WaitDuration.Seconds())
+			metrics.DBConnectionsMaxIdleClosed.WithLabelValues(storeLabel).Add(float64(stats.MaxIdleClosed))
+			metrics.DBConnectionsMaxLifetimeClosed.WithLabelValues(storeLabel).Add(float64(stats.MaxLifetimeClosed))
+		}
 	}
 }
 

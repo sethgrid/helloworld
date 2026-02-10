@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"log/slog"
 	"time"
+
+	"github.com/sethgrid/helloworld/metrics"
 )
 
 // UserEvent represents something the user will want to know about
@@ -21,6 +23,8 @@ type UserEvent struct {
 func NewUserEvent(db *sql.DB, maxEventsPerUser int, logger *slog.Logger) *UserEvent {
 	closeCh := make(chan struct{})
 	ue := &UserEvent{db: db, closer: closeCh, logger: logger}
+	
+	// Start scheduled work goroutine
 	go func() {
 		t := time.NewTicker(1 * time.Hour)
 		defer t.Stop()
@@ -38,7 +42,35 @@ func NewUserEvent(db *sql.DB, maxEventsPerUser int, logger *slog.Logger) *UserEv
 		}
 	}()
 
+	// Start metrics collection for this event store's database connection
+	go ue.collectMetrics(closeCh)
+
 	return ue
+}
+
+// collectMetrics periodically updates Prometheus metrics from database connection pool stats
+func (evt *UserEvent) collectMetrics(closeCh chan struct{}) {
+	if evt.db == nil {
+		return
+	}
+	const storeLabel = "events"
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-closeCh:
+			return
+		case <-ticker.C:
+			stats := evt.db.Stats()
+			metrics.DBConnectionsOpen.WithLabelValues(storeLabel).Set(float64(stats.OpenConnections))
+			metrics.DBConnectionsIdle.WithLabelValues(storeLabel).Set(float64(stats.Idle))
+			metrics.DBConnectionsInUse.WithLabelValues(storeLabel).Set(float64(stats.InUse))
+			metrics.DBConnectionsWaitCount.WithLabelValues(storeLabel).Add(float64(stats.WaitCount))
+			metrics.DBConnectionsWaitDuration.WithLabelValues(storeLabel).Add(stats.WaitDuration.Seconds())
+			metrics.DBConnectionsMaxIdleClosed.WithLabelValues(storeLabel).Add(float64(stats.MaxIdleClosed))
+			metrics.DBConnectionsMaxLifetimeClosed.WithLabelValues(storeLabel).Add(float64(stats.MaxLifetimeClosed))
+		}
+	}
 }
 
 // Close cleans up the work loop that is created when a new UserEvent is created

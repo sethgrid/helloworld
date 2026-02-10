@@ -120,3 +120,25 @@ func DoSomethingWithEvents(eventStore eventWriter, logger *slog.Logger) error {
 	}
 	return nil
 }
+
+// handleHealthcheck returns a handler that checks database connectivity via eventStore.
+// Returns 200 OK if database is reachable, 503 Service Unavailable otherwise.
+func handleHealthcheck(eventStore eventWriter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if eventStore == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("503 Service Unavailable - Event store not configured"))
+			return
+		}
+
+		if !eventStore.IsAvailable() {
+			logger.FromRequest(r).Error("health check failed - database unreachable")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("503 Service Unavailable - Database unreachable"))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("200 OK"))
+	}
+}

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sethgrid/helloworld/internal/taskqueue"
 	"github.com/sethgrid/helloworld/logger/lockbuffer"
-	"github.com/sethgrid/helloworld/taskqueue"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +27,9 @@ func TestHealthcheck(t *testing.T) {
 	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/healthcheck", srv.InternalPort()))
 	require.NoError(t, err)
 
-	assert.Equal(t, resp.StatusCode, http.StatusOK)
+	// Health check now verifies database connectivity
+	// Since test server doesn't have a real DB connection, it should return 503
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, "health check should return 503 when DB is not configured or unreachable")
 }
 
 func TestEventStoreErr(t *testing.T) {

@@ -23,17 +23,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/sethgrid/helloworld/events"
+	"github.com/sethgrid/helloworld/internal/events"
+	"github.com/sethgrid/helloworld/internal/taskqueue"
 	"github.com/sethgrid/helloworld/logger"
-	"github.com/sethgrid/helloworld/metrics"
-	"github.com/sethgrid/helloworld/taskqueue"
 )
-
-// secureCookies is a yucky global because it cleans up the cookie helper functions a lot
-// and it is _always_ the same value in the same environment, so only ever set once. This
-// would never change even in a test except as a test to verify secure vs nonsecure cookie
-// generation which I'm not concerned about at this time
-var secureCookies bool
 
 type contextKey string
 
@@ -70,11 +63,12 @@ type Server struct {
 	internalPort       int
 	srvErr             error
 	inDebug            bool
+	secureCookies      bool // Whether to use secure cookies (moved from global variable)
 	internalHTTPServer *http.Server
 	publicHTTPServer   *http.Server
 
 	parentLogger *slog.Logger
-	db           *sql.DB // Store DB connection for metrics collection
+	taskRunner   *taskqueue.Runner // Task queue runner for graceful shutdown
 }
 
 func New(conf Config) (*Server, error) {
@@ -145,20 +139,19 @@ func New(conf Config) (*Server, error) {
 		go pingDB(db, 10, conf, rootLogger)
 	}
 
-	if conf.ShouldSecure {
-		secureCookies = true
-	}
-
 	addr := fmt.Sprintf("%s:%d", conf.Hostname, conf.Port)
+	taskq := taskqueue.NewMySQLTaskQueue(db, rootLogger, 3, 30*time.Second)
+	eventStore := events.NewUserEvent(db, 2, rootLogger)
+
 	return &Server{config: conf,
-		port:         conf.Port,
-		parentLogger: rootLogger,
-		addr:         addr,
-		protocol:     protocol,
-		inDebug:      conf.EnableDebug,
-		db:           db,
-		taskq:        taskqueue.NewMySQLTaskQueue(db, rootLogger, 3, 30*time.Second),
-		eventStore:   events.NewUserEvent(db, 2, rootLogger),
+		port:          conf.Port,
+		parentLogger:  rootLogger,
+		addr:          addr,
+		protocol:      protocol,
+		inDebug:       conf.EnableDebug,
+		secureCookies: conf.ShouldSecure,
+		taskq:         taskq,
+		eventStore:    eventStore,
 	}, nil
 }
 
@@ -226,18 +219,31 @@ func (s *Server) Close() error {
 		})
 	}
 
+	if s.taskRunner != nil {
+		// Launch a goroutine to close the task queue runner
+		g.Go(func() error {
+			err := s.taskRunner.Close()
+			if err != nil {
+				s.parentLogger.Error("unable to close task queue runner", "error", err.Error())
+			}
+			return err
+		})
+	}
+
 	// Wait for all goroutines to complete and return any error
 	return g.Wait()
 }
 
 func (s *Server) newRouter() *chi.Mux {
-	// if you need to support CORS, pass in orgins here
+	// CORS configuration - use explicit origins even in dev for better security
 	var origins []string
 	if s.config.ShouldSecure {
 		origins = []string{"https://helloworld.com", "http://localhost:*"}
 	} else {
-		s.parentLogger.Warn("opening CORS to allow all")
-		origins = []string{"*"}
+		// Even in dev, use explicit origins instead of wildcard for better security
+		// Wildcard "*" allows any origin, which is a security risk
+		s.parentLogger.Warn("CORS configured for development - using explicit localhost origins")
+		origins = []string{"http://localhost:*", "http://127.0.0.1:*"}
 	}
 
 	router := chi.NewRouter()
@@ -285,9 +291,9 @@ func (s *Server) Serve() error {
 	// this mux server will be spun up at the end of Serve() along side the standard router
 	privateRouter := chi.NewRouter()
 	privateRouter.Handle("/metrics", promhttp.Handler())
-	privateRouter.Get("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("200 OK"))
-	})
+	// Health check uses eventStore to check DB connectivity
+	// Both taskq and eventStore use the same DB, so either works
+	privateRouter.Get("/healthcheck", handleHealthcheck(s.eventStore))
 
 	// all application routes should be defined below
 	router := s.newRouter()
@@ -326,12 +332,24 @@ func (s *Server) Serve() error {
 			Handler:           privateRouter,
 		}
 
-		for {
+		maxRetries := 5
+		retryCount := 0
+		baseDelay := 1 * time.Second
+
+		for retryCount < maxRetries {
 			l, err := net.Listen("tcp", fmt.Sprintf(":%d", s.config.InternalPort))
 			if err != nil {
-				// capturing server error for easier debugging during testing
+				// Exponential backoff: 1s, 2s, 4s, 8s, 16s
+				delay := baseDelay * time.Duration(1<<uint(retryCount))
+				s.parentLogger.Error("unable to start internal listener, retrying",
+					"error", err.Error(),
+					"retry", retryCount+1,
+					"max_retries", maxRetries,
+					"delay_seconds", delay.Seconds(),
+				)
 				s.setLastError(err)
-				time.Sleep(30 * time.Second)
+				time.Sleep(delay)
+				retryCount++
 				continue
 			}
 
@@ -342,19 +360,32 @@ func (s *Server) Serve() error {
 			s.mu.Unlock()
 
 			if err := internalHTTP.Serve(l); err != nil {
-				// capturing server error for easier debugging during testing
+				// Server stopped, retry with exponential backoff
+				delay := baseDelay * time.Duration(1<<uint(retryCount))
+				s.parentLogger.Error("internal server stopped, retrying",
+					"error", err.Error(),
+					"retry", retryCount+1,
+					"max_retries", maxRetries,
+					"delay_seconds", delay.Seconds(),
+				)
 				s.setLastError(err)
-				time.Sleep(30 * time.Second)
+				time.Sleep(delay)
+				retryCount++
 				continue
 			}
+			// If Serve returns without error, reset retry count
+			retryCount = 0
 		}
+
+		// If we've exhausted retries, log final error
+		s.parentLogger.Error("internal server failed after max retries, giving up",
+			"max_retries", maxRetries,
+		)
 	}()
 
 	runner := taskqueue.NewRunner(s.taskq, 1, s.parentLogger, 15*time.Second)
+	s.taskRunner = runner
 	go runner.Start()
-
-	// Start database connection pool metrics collection
-	go s.collectDBMetrics()
 
 	publicHTTP := http.Server{
 		ReadTimeout:       s.config.RequestTimeout,
@@ -478,27 +509,5 @@ func timeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 			// Pass the new context to the next handler
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
-	}
-}
-
-// collectDBMetrics periodically updates Prometheus metrics from database connection pool stats
-func (s *Server) collectDBMetrics() {
-	if s.db == nil {
-		return
-	}
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			stats := s.db.Stats()
-			metrics.DBConnectionsOpen.Set(float64(stats.OpenConnections))
-			metrics.DBConnectionsIdle.Set(float64(stats.Idle))
-			metrics.DBConnectionsInUse.Set(float64(stats.InUse))
-			metrics.DBConnectionsWaitCount.Add(float64(stats.WaitCount))
-			metrics.DBConnectionsWaitDuration.Add(stats.WaitDuration.Seconds())
-			metrics.DBConnectionsMaxIdleClosed.Add(float64(stats.MaxIdleClosed))
-			metrics.DBConnectionsMaxLifetimeClosed.Add(float64(stats.MaxLifetimeClosed))
-		}
 	}
 }

@@ -29,42 +29,63 @@ var RequestDuration = prometheus.NewHistogramVec(
 	[]string{"method", "endpoint"},
 )
 
-// Database connection pool metrics
+// Database connection pool metrics with store label to distinguish between different data stores
 var (
-	DBConnectionsOpen = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "db_connections_open",
-		Help: "Current number of open database connections",
-	})
+	DBConnectionsOpen = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "db_connections_open",
+			Help: "Current number of open database connections",
+		},
+		[]string{"store"},
+	)
 
-	DBConnectionsIdle = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "db_connections_idle",
-		Help: "Current number of idle database connections",
-	})
+	DBConnectionsIdle = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "db_connections_idle",
+			Help: "Current number of idle database connections",
+		},
+		[]string{"store"},
+	)
 
-	DBConnectionsInUse = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "db_connections_in_use",
-		Help: "Current number of in-use database connections",
-	})
+	DBConnectionsInUse = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "db_connections_in_use",
+			Help: "Current number of in-use database connections",
+		},
+		[]string{"store"},
+	)
 
-	DBConnectionsWaitCount = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "db_connections_wait_total",
-		Help: "Total number of connections waited for",
-	})
+	DBConnectionsWaitCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "db_connections_wait_total",
+			Help: "Total number of connections waited for",
+		},
+		[]string{"store"},
+	)
 
-	DBConnectionsWaitDuration = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "db_connections_wait_duration_seconds_total",
-		Help: "Total time spent waiting for connections",
-	})
+	DBConnectionsWaitDuration = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "db_connections_wait_duration_seconds_total",
+			Help: "Total time spent waiting for connections",
+		},
+		[]string{"store"},
+	)
 
-	DBConnectionsMaxIdleClosed = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "db_connections_max_idle_closed_total",
-		Help: "Total number of connections closed due to SetMaxIdleConns",
-	})
+	DBConnectionsMaxIdleClosed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "db_connections_max_idle_closed_total",
+			Help: "Total number of connections closed due to SetMaxIdleConns",
+		},
+		[]string{"store"},
+	)
 
-	DBConnectionsMaxLifetimeClosed = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "db_connections_max_lifetime_closed_total",
-		Help: "Total number of connections closed due to SetConnMaxLifetime",
-	})
+	DBConnectionsMaxLifetimeClosed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "db_connections_max_lifetime_closed_total",
+			Help: "Total number of connections closed due to SetConnMaxLifetime",
+		},
+		[]string{"store"},
+	)
 )
 
 func init() {
