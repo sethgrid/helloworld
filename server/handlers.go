@@ -41,6 +41,16 @@ func handleHelloworld(eventStore eventWriter) http.HandlerFunc {
 			} else if duration < 1*time.Millisecond {
 				duration = 1 * time.Millisecond
 			}
+
+			// Check context before sleeping to avoid race conditions
+			select {
+			case <-r.Context().Done():
+				err := kverr.New(fmt.Errorf("context canceled"), "context_err", r.Context().Err())
+				errorJSON(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
+				return
+			default:
+			}
+
 			time.Sleep(duration)
 
 			err = someWorkThatChecksContextDeadline(r.Context())
