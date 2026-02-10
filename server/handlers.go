@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"time"
@@ -18,40 +19,45 @@ type helloworldResp struct {
 	Hello string `json:"hello"`
 }
 
-func (s *Server) helloworldHandler(w http.ResponseWriter, r *http.Request) {
-	// delay param can be any unit of time, e.g. 1s, 500ms, 1.5s
-	// if delay is provided, don't simulate a random failure
-	// else, simulate a random failure and pass additional info into the logger via kverr
-	if delay := r.URL.Query().Get("delay"); delay != "" {
-		duration, err := time.ParseDuration(delay)
-		if err != nil {
-			s.ErrorJSON(w, r, http.StatusBadRequest, "invalid delay", kverr.New(err, "delay", delay))
+// handleHelloworld is a standalone handler function that receives dependencies via closure.
+// Following modern Go patterns, handlers are not methods on the Server struct.
+// The logger is injected via middleware and accessed through the request context.
+func handleHelloworld() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// delay param can be any unit of time, e.g. 1s, 500ms, 1.5s
+		// if delay is provided, don't simulate a random failure
+		// else, simulate a random failure and pass additional info into the logger via kverr
+		if delay := r.URL.Query().Get("delay"); delay != "" {
+			duration, err := time.ParseDuration(delay)
+			if err != nil {
+				errorJSON(w, r, http.StatusBadRequest, "invalid delay", kverr.New(err, "delay", delay))
+				return
+			}
+			if duration > 90*time.Second {
+				logger.FromRequest(r).Error("delay too long", "duration", duration.String())
+				duration = 1 * time.Millisecond
+			} else if duration < 1*time.Millisecond {
+				duration = 1 * time.Millisecond
+			}
+			time.Sleep(duration)
+
+			err = someWorkThatChecksContextDeadline(r.Context())
+			if err != nil {
+				errorJSON(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
+				return
+			}
+
+		} else if err := RandomFailure(); err != nil {
+			// NOTE: we don't have to tell other services that a kverr is being passed in
+			errorJSON(w, r, http.StatusInternalServerError, "random failure", err)
 			return
 		}
-		if duration > 90*time.Second {
-			logger.FromRequest(r).Error("delay too long", "duration", duration.String())
-			duration = 1 * time.Millisecond
-		} else if duration < 1*time.Millisecond {
-			duration = 1 * time.Millisecond
+
+		resp := helloworldResp{Hello: "World!"}
+
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			logger.FromRequest(r).Error("unable to encode json", "error", err.Error())
 		}
-		time.Sleep(duration)
-
-		err = someWorkThatChecksContextDeadline(r.Context())
-		if err != nil {
-			s.ErrorJSON(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
-			return
-		}
-
-	} else if err := RandomFailure(); err != nil {
-		// NOTE: we don't have to tell other services that a kverr is being passed in
-		s.ErrorJSON(w, r, http.StatusInternalServerError, "random failure", err)
-		return
-	}
-
-	resp := helloworldResp{Hello: "World!"}
-
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logger.FromRequest(r).Error("unable to encode json", "error", err.Error())
 	}
 }
 
@@ -81,11 +87,12 @@ func someWorkThatChecksContextDeadline(ctx context.Context) error {
 }
 
 // DoSomethingWithEvents is for illustrative purposes of faking during tests,
-// showing how faked dependencies bubble up in test assertions
-func (s *Server) DoSomethingWithEvents() error {
-	err := s.eventStore.Write(180, "a message in a bottle")
+// showing how faked dependencies bubble up in test assertions.
+// This is a standalone function that receives dependencies as parameters.
+func DoSomethingWithEvents(eventStore eventWriter, logger *slog.Logger) error {
+	err := eventStore.Write(180, "a message in a bottle")
 	if err != nil {
-		s.parentLogger.Error(err.Error())
+		logger.Error(err.Error())
 		return fmt.Errorf("unable to DoSomethingWithEvents: %w", err)
 	}
 	return nil

@@ -38,9 +38,10 @@ func TestEventStoreErr(t *testing.T) {
 	defer srv.Close()
 
 	// replace the event store
-	srv.eventStore = &fakeEventStore{err: fmt.Errorf("oh noes, mysql err")}
+	fakeStore := &fakeEventStore{err: fmt.Errorf("oh noes, mysql err")}
+	srv.eventStore = fakeStore
 
-	err = srv.DoSomethingWithEvents()
+	err = DoSomethingWithEvents(fakeStore, srv.parentLogger)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "oh noes, mysql err")

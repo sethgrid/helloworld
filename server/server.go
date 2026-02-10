@@ -272,7 +272,9 @@ func (s *Server) Serve() error {
 
 	// if routes require authentication, use a new With or add it above as a separate middleware
 	// router.Get("/", s.uiIndex)
-	router.Get("/", s.helloworldHandler)
+	// Handlers receive dependencies at route definition time, following modern Go patterns.
+	// Logger is injected via middleware and accessed through request context.
+	router.Get("/", handleHelloworld())
 
 	// normally we use a defer for unlocking
 	// we are not doing that here because http.Serve below is a blocking call

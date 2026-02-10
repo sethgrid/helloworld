@@ -12,8 +12,9 @@ type errorResp struct {
 	Message string `json:"message"`
 }
 
-// ErrorJSON prepares the user message for json format. In the event an err is present, an ERROR level log will be emitted, else INFO
-func (s *Server) ErrorJSON(w http.ResponseWriter, r *http.Request, statusCode int, userMsg string, err error) {
+// errorJSON prepares the user message for json format. In the event an err is present, an ERROR level log will be emitted, else INFO
+// This is a standalone helper function that doesn't require the Server struct, following modern Go handler patterns.
+func errorJSON(w http.ResponseWriter, r *http.Request, statusCode int, userMsg string, err error) {
 	// NOTE: if this was a kverr, those key:value pairs will be pulled out and attached to our error log here
 	logger := logger.FromRequest(r).With("status_code", statusCode).With(kverr.YoinkArgs(err)...)
 	logger.Error(userMsg, "error", err.Error())
