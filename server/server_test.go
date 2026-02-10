@@ -200,14 +200,14 @@ func findMetricValue(metrics *bytes.Buffer, prefix string) (float64, error) {
 			// Convert the value to a float
 			value, err := strconv.ParseFloat(parts[1], 64)
 			if err != nil {
-				return 0, fmt.Errorf("invalid metric value: %v", err)
+				return 0, fmt.Errorf("invalid metric value: %w", err)
 			}
 			return value, nil
 		}
 	}
 	// Return an error if no matching prefix was found
 	if err := scanner.Err(); err != nil {
-		return 0, fmt.Errorf("error reading metrics: %v", err)
+		return 0, fmt.Errorf("error reading metrics: %w", err)
 	}
 	return 0, fmt.Errorf("metric with prefix '%s' not found", prefix)
 }

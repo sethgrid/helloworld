@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+    branches: ['*']
+  push:
+    branches: ['*']
+
+jobs:
+  check-version:
+    name: Check VERSION file changed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history to compare changes
+
+      - name: Check if VERSION file was changed
+        id: check_version
+        run: |
+          # For pull requests, compare against the base branch
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            # For pushes, compare against the previous commit
+            # If before is empty (first commit), compare against HEAD~1 or allow if it's the initial commit
+            BASE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.event.after }}"
+            
+            # If before is empty, try to get the parent commit
+            if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]; then
+              # Check if this is the initial commit (no parent)
+              if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+                BASE_SHA="HEAD~1"
+              else
+                # This is the initial commit, allow it (VERSION file should exist)
+                if [ -f "VERSION" ]; then
+                  echo "changed=true" >> $GITHUB_OUTPUT
+                  echo "✅ Initial commit with VERSION file"
+                  exit 0
+                else
+                  echo "changed=false" >> $GITHUB_OUTPUT
+                  echo "❌ VERSION file missing in initial commit"
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+          
+          # Check if VERSION file is in the list of changed files
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -q "^VERSION$"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "✅ VERSION file has been updated"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "❌ VERSION file has NOT been updated"
+          fi
+
+      - name: Fail if VERSION not changed
+        if: steps.check_version.outputs.changed != 'true'
+        run: |
+          echo "::error::VERSION file must be updated in every commit/PR. Please update the VERSION file and try again."
+          exit 1
+
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    needs: check-version
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run tests
+        run: go test ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: check-version
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Read VERSION
+        id: version
+        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      - name: Build
+        run: |
+          go build -ldflags="-X 'main.Version=${{ steps.version.outputs.VERSION }}'" -o bin/helloworld ./cmd/helloworld

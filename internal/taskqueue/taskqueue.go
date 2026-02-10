@@ -121,7 +121,14 @@ func (tq *Runner) pollTasks() {
 		// between checking for the closed channel and pushing a task, we could have closed the task channel.
 		// this should only have a chance to happen in testing during / server shutdown
 		if r := recover(); r != nil {
-			tq.logger.Error(fmt.Sprintf("Recovered from panic in poller: %v", r))
+			// Use structured logging with context about the panic
+			tq.logger.Error("recovered from panic in task queue poller",
+				"panic_value", fmt.Sprintf("%v", r),
+				"component", "taskqueue",
+				"function", "pollTasks",
+			)
+			// Panic recovery is appropriate here to prevent the entire runner from crashing
+			// The poller will continue to the next iteration
 		}
 	}()
 
@@ -153,18 +160,41 @@ func (tq *Runner) pollTasks() {
 
 func (tq *Runner) processTask(task Task) {
 	logger := tq.logger.With("user_id", task.UserID, "task_type", task.TaskType, "task_id", task.ID, "attempts", task.Attempts)
+	
+	var processErr error
 	switch task.TaskType {
 	// TODO add some task types
 	case "some predefined task":
-		// pass
+		// Task processing logic would go here
+		// For now, this is a placeholder
 	default:
+		processErr = fmt.Errorf("unknown task type: %s", task.TaskType)
 		logger.Error("unknown task", "task_type", task.TaskType)
+		// Don't mark unknown tasks as complete - they should be handled separately
+		// Could implement retry logic or dead letter queue here
 		return
 	}
 
+	// If task processing failed, log and return without marking complete
+	if processErr != nil {
+		logger.Error("task processing failed",
+			"error", processErr.Error(),
+			"component", "taskqueue",
+		)
+		// Task will be retried on next poll if it's still in checked_out status
+		return
+	}
+
+	// Mark task as complete only if processing succeeded
 	err := tq.TaskStore.MarkTaskComplete(task.ID)
 	if err != nil {
-		logger.Error("unable to mark task complete", kverr.YoinkArgs(err)...)
-
+		// Use structured error logging with kverr context
+		// kverr.YoinkArgs returns key-value pairs that we spread into the logger
+		logger = logger.With("component", "taskqueue")
+		logger = logger.With(kverr.YoinkArgs(err)...)
+		logger.Error("unable to mark task complete", "error", err.Error())
+		// This is a critical error - the task was processed but we can't mark it complete
+		// The task may be reprocessed, which could cause duplicate work
+		// Consider implementing idempotency checks in task processing
 	}
 }

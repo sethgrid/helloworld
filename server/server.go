@@ -97,7 +97,7 @@ func New(conf Config) (*Server, error) {
 			RootCAs: rootCertPool,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("unable to register TLS config: %v", err)
+			return nil, fmt.Errorf("unable to register TLS config: %w", err)
 		}
 		rootLogger.Info("totally setting custom tls")
 		customTLS = "&tls=custom"
