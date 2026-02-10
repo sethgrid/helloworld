@@ -86,6 +86,34 @@ var (
 		},
 		[]string{"store"},
 	)
+
+	// Database query timing metrics
+	DBQueryDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "db_query_duration_seconds",
+			Help:    "Histogram of database query duration",
+			Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+		},
+		[]string{"store", "operation"},
+	)
+
+	// External API call timing metrics
+	APICallDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "api_call_duration_seconds",
+			Help:    "Histogram of external API call duration",
+			Buckets: []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
+		},
+		[]string{"service", "endpoint", "method"},
+	)
+
+	APICallCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "api_calls_total",
+			Help: "Total number of external API calls",
+		},
+		[]string{"service", "endpoint", "method", "status"},
+	)
 )
 
 func init() {
@@ -104,4 +132,9 @@ func init() {
 	prometheus.MustRegister(DBConnectionsWaitDuration)
 	prometheus.MustRegister(DBConnectionsMaxIdleClosed)
 	prometheus.MustRegister(DBConnectionsMaxLifetimeClosed)
+	// Database query timing
+	prometheus.MustRegister(DBQueryDuration)
+	// External API call metrics
+	prometheus.MustRegister(APICallDuration)
+	prometheus.MustRegister(APICallCount)
 }

@@ -225,11 +225,8 @@ docker compose up helloworld
 
 ## TODOs
 
- - [ ] Timing metrics to db and to any API
  - [ ] Make a testcase showing grpc handling
  - [ ] Make a testcase showing graphql handling
- - [ ] Status page and external monitoring
- - [ ] Rate limiting
  - [ ] UI route handling? or just keep this as a JSON api server?
 
 

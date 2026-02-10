@@ -91,9 +91,15 @@ func (evt *UserEvent) IsAvailable() bool {
 	if evt.db == nil {
 		return false
 	}
-	if err := evt.db.Ping(); err != nil {
-		evt.logger.Debug("event store unavailable", "error", err.Error())
-		return false
-	}
-	return true
+	var available bool
+	_ = timeDBOperation("ping", func() error {
+		if err := evt.db.Ping(); err != nil {
+			evt.logger.Debug("event store unavailable", "error", err.Error())
+			available = false
+			return err
+		}
+		available = true
+		return nil
+	})
+	return available
 }

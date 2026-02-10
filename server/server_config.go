@@ -29,6 +29,7 @@ type Config struct {
 	TaskExpiration    time.Duration `default:"1m" envconfig:"task_expiration"`
 	ShutdownTimeout   time.Duration `default:"30s" envconfig:"shutdown_timeout"`
 	RequestTimeout    time.Duration `default:"30s" envconfig:"request_timeout"`
+	RateLimitRPS      int           `default:"100" envconfig:"rate_limit_rps"` // Requests per second
 
 	SGAPIKey string `default:"" envconfig:"sendgrid_apikey"`
 

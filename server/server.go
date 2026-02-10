@@ -302,6 +302,7 @@ func (s *Server) Serve() error {
 	// Health check uses eventStore to check DB connectivity
 	// Both taskq and eventStore use the same DB, so either works
 	privateRouter.Get("/healthcheck", handleHealthcheck(s.eventStore))
+	privateRouter.Get("/status", handleStatus(s.eventStore, s.config.Version))
 
 	// all application routes should be defined below
 	router := s.newRouter()
@@ -310,7 +311,8 @@ func (s *Server) Serve() error {
 	// router.Get("/", s.uiIndex)
 	// Handlers receive dependencies at route definition time, following modern Go patterns.
 	// Logger is injected via middleware and accessed through request context.
-	router.Get("/", handleHelloworld(s.eventStore))
+	// Rate limiting is applied only to the hello world endpoint
+	router.With(rateLimitMiddleware(s.config.RateLimitRPS)).Get("/", handleHelloworld(s.eventStore))
 
 	// normally we use a defer for unlocking
 	// we are not doing that here because http.Serve below is a blocking call
