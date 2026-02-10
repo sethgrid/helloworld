@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -38,6 +37,18 @@ var secureCookies bool
 type contextKey string
 
 var ctxUser contextKey = "user"
+
+// maskDSN redacts sensitive information from a database connection string
+func maskDSN(dsn string) string {
+	// Simple masking: replace password with "***"
+	// Format: user:password@tcp(host:port)/...
+	if idx := strings.Index(dsn, "@"); idx > 0 {
+		if colonIdx := strings.LastIndex(dsn[:idx], ":"); colonIdx > 0 {
+			return dsn[:colonIdx+1] + "***" + dsn[idx:]
+		}
+	}
+	return "***"
+}
 
 type eventWriter interface {
 	Write(userID int64, message string) error
@@ -73,9 +84,12 @@ func New(conf Config) (*Server, error) {
 		protocol = "https://"
 		// if we are securing cookies, we must be in a production environment
 		// and we want to ensure we are connecting to mysql with a ca certificate
+		if conf.DBCACertPath == "" {
+			return nil, fmt.Errorf("db_ca_cert_path must be set when should_secure is true")
+		}
 		caCert, err := os.ReadFile(conf.DBCACertPath)
 		if err != nil {
-			return nil, fmt.Errorf("unable to read CA cert: %v", err)
+			return nil, fmt.Errorf("unable to read CA cert: %w", err)
 		}
 
 		rootCertPool := x509.NewCertPool()
@@ -104,8 +118,12 @@ func New(conf Config) (*Server, error) {
 		customTLS,
 	)
 
-	// helpful if you are having trouble reaching the db; warning: prints password
-	log.Println("dsn: ", dsn)
+	// DSN logging removed for security - never log database connection strings with passwords
+	// If debugging is needed, use EnableDebug flag and log a masked version
+	if conf.EnableDebug {
+		maskedDSN := maskDSN(dsn)
+		rootLogger.Debug("database connection", "dsn", maskedDSN)
+	}
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
