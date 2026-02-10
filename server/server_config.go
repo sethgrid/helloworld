@@ -16,19 +16,20 @@ type Config struct {
 	DBPass       string `default:"testuser" envconfig:"db_pass"`
 	DBName       string `default:"helloworld" envconfig:"db_name"`
 	DBPort       string `default:"3306" envconfig:"db_port"`
-	DBCACertPath string `default:"/home/seth/ca-certificate.crt" evnconfig:"cert_path"`
+	DBCACertPath string `default:"" envconfig:"db_ca_cert_path"`
 	RequireDBUp  bool   `default:"false" envconfig:"require_db_up"`
 
 	// Hostname binds to all interfaces so docker services can connect to this server outside of docker
 	Hostname          string        `default:"0.0.0.0" envconfig:"hostname"`
-	Port              int           `default:"16666" evnconfig:"port"`
+	Port              int           `default:"16666" envconfig:"port"`
 	InternalPort      int           `default:"16667" envconfig:"internal_port"`
 	EnableSocialLogin bool          `default:"false" envconfig:"enable_social_login"`
 	ShouldSecure      bool          `default:"false" envconfig:"should_secure"`
 	EnableDebug       bool          `default:"true" envconfig:"enable_debug"`
 	TaskExpiration    time.Duration `default:"1m" envconfig:"task_expiration"`
 	ShutdownTimeout   time.Duration `default:"30s" envconfig:"shutdown_timeout"`
-	RequestTimeout    time.Duration `default:"30s" envconfig:"shutdown_timeout"`
+	RequestTimeout    time.Duration `default:"30s" envconfig:"request_timeout"`
+	RateLimitRPS      int           `default:"100" envconfig:"rate_limit_rps"` // Requests per second
 
 	SGAPIKey string `default:"" envconfig:"sendgrid_apikey"`
 

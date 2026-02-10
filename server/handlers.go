@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"time"
@@ -15,43 +16,71 @@ import (
 )
 
 type helloworldResp struct {
-	Hello string `json:"hello"`
+	Hello               string `json:"hello"`
+	EventStoreAvailable bool   `json:"event_store_available"`
+	EventStoreMessage   string `json:"event_store_message"`
 }
 
-func (s *Server) helloworldHandler(w http.ResponseWriter, r *http.Request) {
-	// delay param can be any unit of time, e.g. 1s, 500ms, 1.5s
-	// if delay is provided, don't simulate a random failure
-	// else, simulate a random failure and pass additional info into the logger via kverr
-	if delay := r.URL.Query().Get("delay"); delay != "" {
-		duration, err := time.ParseDuration(delay)
-		if err != nil {
-			s.ErrorJSON(w, r, http.StatusBadRequest, "invalid delay", kverr.New(err, "delay", delay))
+// handleHelloworld is a standalone handler function that receives dependencies via closure.
+// Following modern Go patterns, handlers are not methods on the Server struct.
+// The logger is injected via middleware and accessed through the request context.
+func handleHelloworld(eventStore eventWriter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// delay param can be any unit of time, e.g. 1s, 500ms, 1.5s
+		// if delay is provided, don't simulate a random failure
+		// else, simulate a random failure and pass additional info into the logger via kverr
+		if delay := r.URL.Query().Get("delay"); delay != "" {
+			duration, err := time.ParseDuration(delay)
+			if err != nil {
+				errorJSON(w, r, http.StatusBadRequest, "invalid delay", kverr.New(err, "delay", delay))
+				return
+			}
+			if duration > 90*time.Second {
+				logger.FromRequest(r).Error("delay too long", "duration", duration.String())
+				duration = 1 * time.Millisecond
+			} else if duration < 1*time.Millisecond {
+				duration = 1 * time.Millisecond
+			}
+
+			// Check context before sleeping to avoid race conditions
+			select {
+			case <-r.Context().Done():
+				err := kverr.New(fmt.Errorf("context canceled"), "context_err", r.Context().Err())
+				errorJSON(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
+				return
+			default:
+			}
+
+			time.Sleep(duration)
+
+			err = someWorkThatChecksContextDeadline(r.Context())
+			if err != nil {
+				errorJSON(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
+				return
+			}
+
+		} else if err := RandomFailure(); err != nil {
+			// NOTE: we don't have to tell other services that a kverr is being passed in
+			errorJSON(w, r, http.StatusInternalServerError, "random failure", err)
 			return
 		}
-		if duration > 90*time.Second {
-			logger.FromRequest(r).Error("delay too long", "duration", duration.String())
-			duration = 1 * time.Millisecond
-		} else if duration < 1*time.Millisecond {
-			duration = 1 * time.Millisecond
-		}
-		time.Sleep(duration)
 
-		err = someWorkThatChecksContextDeadline(r.Context())
-		if err != nil {
-			s.ErrorJSON(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
-			return
+		// Check event store availability
+		eventStoreAvailable := eventStore.IsAvailable()
+		eventStoreMessage := "Event store is available"
+		if !eventStoreAvailable {
+			eventStoreMessage = "Event store is not available"
 		}
 
-	} else if err := RandomFailure(); err != nil {
-		// NOTE: we don't have to tell other services that a kverr is being passed in
-		s.ErrorJSON(w, r, http.StatusInternalServerError, "random failure", err)
-		return
-	}
+		resp := helloworldResp{
+			Hello:               "World!",
+			EventStoreAvailable: eventStoreAvailable,
+			EventStoreMessage:   eventStoreMessage,
+		}
 
-	resp := helloworldResp{Hello: "World!"}
-
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logger.FromRequest(r).Error("unable to encode json", "error", err.Error())
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			logger.FromRequest(r).Error("unable to encode json", "error", err.Error())
+		}
 	}
 }
 
@@ -81,12 +110,35 @@ func someWorkThatChecksContextDeadline(ctx context.Context) error {
 }
 
 // DoSomethingWithEvents is for illustrative purposes of faking during tests,
-// showing how faked dependencies bubble up in test assertions
-func (s *Server) DoSomethingWithEvents() error {
-	err := s.eventStore.Write(180, "a message in a bottle")
+// showing how faked dependencies bubble up in test assertions.
+// This is a standalone function that receives dependencies as parameters.
+func DoSomethingWithEvents(eventStore eventWriter, logger *slog.Logger) error {
+	err := eventStore.Write(180, "a message in a bottle")
 	if err != nil {
-		s.parentLogger.Error(err.Error())
+		logger.Error(err.Error())
 		return fmt.Errorf("unable to DoSomethingWithEvents: %w", err)
 	}
 	return nil
+}
+
+// handleHealthcheck returns a handler that checks database connectivity via eventStore.
+// Returns 200 OK if database is reachable, 503 Service Unavailable otherwise.
+func handleHealthcheck(eventStore eventWriter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if eventStore == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("503 Service Unavailable - Event store not configured"))
+			return
+		}
+
+		if !eventStore.IsAvailable() {
+			logger.FromRequest(r).Error("health check failed - database unreachable")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("503 Service Unavailable - Database unreachable"))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("200 OK"))
+	}
 }

@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -24,24 +23,31 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/sethgrid/helloworld/events"
+	"github.com/sethgrid/helloworld/internal/events"
+	"github.com/sethgrid/helloworld/internal/taskqueue"
 	"github.com/sethgrid/helloworld/logger"
-	"github.com/sethgrid/helloworld/taskqueue"
 )
-
-// secureCookies is a yucky global because it cleans up the cookie helper functions a lot
-// and it is _always_ the same value in the same environment, so only ever set once. This
-// would never change even in a test except as a test to verify secure vs nonsecure cookie
-// generation which I'm not concerned about at this time
-var secureCookies bool
 
 type contextKey string
 
 var ctxUser contextKey = "user"
 
+// maskDSN redacts sensitive information from a database connection string
+func maskDSN(dsn string) string {
+	// Simple masking: replace password with "***"
+	// Format: user:password@tcp(host:port)/...
+	if idx := strings.Index(dsn, "@"); idx > 0 {
+		if colonIdx := strings.LastIndex(dsn[:idx], ":"); colonIdx > 0 {
+			return dsn[:colonIdx+1] + "***" + dsn[idx:]
+		}
+	}
+	return "***"
+}
+
 type eventWriter interface {
 	Write(userID int64, message string) error
 	Close() error
+	IsAvailable() bool
 }
 
 type Server struct {
@@ -57,10 +63,12 @@ type Server struct {
 	internalPort       int
 	srvErr             error
 	inDebug            bool
+	secureCookies      bool // Whether to use secure cookies (moved from global variable)
 	internalHTTPServer *http.Server
 	publicHTTPServer   *http.Server
 
 	parentLogger *slog.Logger
+	taskRunner   *taskqueue.Runner // Task queue runner for graceful shutdown
 }
 
 func New(conf Config) (*Server, error) {
@@ -72,9 +80,12 @@ func New(conf Config) (*Server, error) {
 		protocol = "https://"
 		// if we are securing cookies, we must be in a production environment
 		// and we want to ensure we are connecting to mysql with a ca certificate
+		if conf.DBCACertPath == "" {
+			return nil, fmt.Errorf("db_ca_cert_path must be set when should_secure is true")
+		}
 		caCert, err := os.ReadFile(conf.DBCACertPath)
 		if err != nil {
-			return nil, fmt.Errorf("unable to read CA cert: %v", err)
+			return nil, fmt.Errorf("unable to read CA cert: %w", err)
 		}
 
 		rootCertPool := x509.NewCertPool()
@@ -86,25 +97,29 @@ func New(conf Config) (*Server, error) {
 			RootCAs: rootCertPool,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("unable to register TLS config: %v", err)
+			return nil, fmt.Errorf("unable to register TLS config: %w", err)
 		}
 		rootLogger.Info("totally setting custom tls")
 		customTLS = "&tls=custom"
 	} else {
 		rootLogger.Error("secure cookies and tls to the db are turned off")
 	}
-	// TODO: after db bootstrap, include db name before timeout and other options
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?timeout=5s&parseTime=true%s",
+	// Include database name in DSN - database should be bootstrapped before server starts
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?timeout=5s&parseTime=true%s",
 		conf.DBUser,
 		conf.DBPass,
 		conf.DBHost,
 		strings.TrimPrefix(conf.DBPort, ":"),
-
+		conf.DBName,
 		customTLS,
 	)
 
-	// helpful if you are having trouble reaching the db; warning: prints password
-	log.Println("dsn: ", dsn)
+	// DSN logging removed for security - never log database connection strings with passwords
+	// If debugging is needed, use EnableDebug flag and log a masked version
+	if conf.EnableDebug {
+		maskedDSN := maskDSN(dsn)
+		rootLogger.Debug("database connection", "dsn", maskedDSN)
+	}
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -113,7 +128,7 @@ func New(conf Config) (*Server, error) {
 
 	db.SetConnMaxLifetime(time.Minute * 3)
 	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(0)
+	db.SetMaxIdleConns(5) // Allow idle connections for better performance
 	db.SetConnMaxIdleTime(time.Minute * 3)
 
 	if conf.RequireDBUp {
@@ -124,19 +139,19 @@ func New(conf Config) (*Server, error) {
 		go pingDB(db, 10, conf, rootLogger)
 	}
 
-	if conf.ShouldSecure {
-		secureCookies = true
-	}
-
 	addr := fmt.Sprintf("%s:%d", conf.Hostname, conf.Port)
+	taskq := taskqueue.NewMySQLTaskQueue(db, rootLogger, 3, 30*time.Second)
+	eventStore := events.NewUserEvent(db, 2, rootLogger)
+
 	return &Server{config: conf,
-		port:         conf.Port,
-		parentLogger: rootLogger,
-		addr:         addr,
-		protocol:     protocol,
-		inDebug:      conf.EnableDebug,
-		taskq:        taskqueue.NewMySQLTaskQueue(db, rootLogger, 3, 30*time.Second),
-		eventStore:   events.NewUserEvent(db, 2, rootLogger),
+		port:          conf.Port,
+		parentLogger:  rootLogger,
+		addr:          addr,
+		protocol:      protocol,
+		inDebug:       conf.EnableDebug,
+		secureCookies: conf.ShouldSecure,
+		taskq:         taskq,
+		eventStore:    eventStore,
 	}, nil
 }
 
@@ -204,18 +219,39 @@ func (s *Server) Close() error {
 		})
 	}
 
-	// Wait for all goroutines to complete and return any error
-	return g.Wait()
+	if s.taskRunner != nil {
+		// Launch a goroutine to close the task queue runner
+		g.Go(func() error {
+			err := s.taskRunner.Close()
+			if err != nil {
+				s.parentLogger.Error("unable to close task queue runner", "error", err.Error())
+			}
+			return err
+		})
+	}
+
+	// Wait for all goroutines to complete
+	// errgroup.Wait() returns the first non-nil error, but we want to collect all errors
+	// for better observability. However, errgroup doesn't support collecting all errors,
+	// so we log each error as it occurs and return the first error encountered.
+	err := g.Wait()
+	if err != nil {
+		// Additional errors have already been logged by individual goroutines
+		return fmt.Errorf("shutdown completed with errors: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) newRouter() *chi.Mux {
-	// if you need to support CORS, pass in orgins here
+	// CORS configuration - use explicit origins even in dev for better security
 	var origins []string
 	if s.config.ShouldSecure {
 		origins = []string{"https://helloworld.com", "http://localhost:*"}
 	} else {
-		s.parentLogger.Warn("opening CORS to allow all")
-		origins = []string{"*"}
+		// Even in dev, use explicit origins instead of wildcard for better security
+		// Wildcard "*" allows any origin, which is a security risk
+		s.parentLogger.Warn("CORS configured for development - using explicit localhost origins")
+		origins = []string{"http://localhost:*", "http://127.0.0.1:*"}
 	}
 
 	router := chi.NewRouter()
@@ -263,16 +299,20 @@ func (s *Server) Serve() error {
 	// this mux server will be spun up at the end of Serve() along side the standard router
 	privateRouter := chi.NewRouter()
 	privateRouter.Handle("/metrics", promhttp.Handler())
-	privateRouter.Get("/healthcheck", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("200 OK"))
-	})
+	// Health check uses eventStore to check DB connectivity
+	// Both taskq and eventStore use the same DB, so either works
+	privateRouter.Get("/healthcheck", handleHealthcheck(s.eventStore))
+	privateRouter.Get("/status", handleStatus(s.eventStore, s.config.Version))
 
 	// all application routes should be defined below
 	router := s.newRouter()
 
 	// if routes require authentication, use a new With or add it above as a separate middleware
 	// router.Get("/", s.uiIndex)
-	router.Get("/", s.helloworldHandler)
+	// Handlers receive dependencies at route definition time, following modern Go patterns.
+	// Logger is injected via middleware and accessed through request context.
+	// Rate limiting is applied only to the hello world endpoint
+	router.With(rateLimitMiddleware(s.config.RateLimitRPS)).Get("/", handleHelloworld(s.eventStore))
 
 	// normally we use a defer for unlocking
 	// we are not doing that here because http.Serve below is a blocking call
@@ -302,12 +342,24 @@ func (s *Server) Serve() error {
 			Handler:           privateRouter,
 		}
 
-		for {
+		maxRetries := 5
+		retryCount := 0
+		baseDelay := 1 * time.Second
+
+		for retryCount < maxRetries {
 			l, err := net.Listen("tcp", fmt.Sprintf(":%d", s.config.InternalPort))
 			if err != nil {
-				// capturing server error for easier debugging during testing
+				// Exponential backoff: 1s, 2s, 4s, 8s, 16s
+				delay := baseDelay * time.Duration(1<<uint(retryCount))
+				s.parentLogger.Error("unable to start internal listener, retrying",
+					"error", err.Error(),
+					"retry", retryCount+1,
+					"max_retries", maxRetries,
+					"delay_seconds", delay.Seconds(),
+				)
 				s.setLastError(err)
-				time.Sleep(30 * time.Second)
+				time.Sleep(delay)
+				retryCount++
 				continue
 			}
 
@@ -318,15 +370,31 @@ func (s *Server) Serve() error {
 			s.mu.Unlock()
 
 			if err := internalHTTP.Serve(l); err != nil {
-				// capturing server error for easier debugging during testing
+				// Server stopped, retry with exponential backoff
+				delay := baseDelay * time.Duration(1<<uint(retryCount))
+				s.parentLogger.Error("internal server stopped, retrying",
+					"error", err.Error(),
+					"retry", retryCount+1,
+					"max_retries", maxRetries,
+					"delay_seconds", delay.Seconds(),
+				)
 				s.setLastError(err)
-				time.Sleep(30 * time.Second)
+				time.Sleep(delay)
+				retryCount++
 				continue
 			}
+			// If Serve returns without error, reset retry count
+			retryCount = 0
 		}
+
+		// If we've exhausted retries, log final error
+		s.parentLogger.Error("internal server failed after max retries, giving up",
+			"max_retries", maxRetries,
+		)
 	}()
 
 	runner := taskqueue.NewRunner(s.taskq, 1, s.parentLogger, 15*time.Second)
+	s.taskRunner = runner
 	go runner.Start()
 
 	publicHTTP := http.Server{
