@@ -29,12 +29,58 @@ var RequestDuration = prometheus.NewHistogramVec(
 	[]string{"method", "endpoint"},
 )
 
+// Database connection pool metrics
+var (
+	DBConnectionsOpen = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "db_connections_open",
+		Help: "Current number of open database connections",
+	})
+
+	DBConnectionsIdle = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "db_connections_idle",
+		Help: "Current number of idle database connections",
+	})
+
+	DBConnectionsInUse = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "db_connections_in_use",
+		Help: "Current number of in-use database connections",
+	})
+
+	DBConnectionsWaitCount = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "db_connections_wait_total",
+		Help: "Total number of connections waited for",
+	})
+
+	DBConnectionsWaitDuration = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "db_connections_wait_duration_seconds_total",
+		Help: "Total time spent waiting for connections",
+	})
+
+	DBConnectionsMaxIdleClosed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "db_connections_max_idle_closed_total",
+		Help: "Total number of connections closed due to SetMaxIdleConns",
+	})
+
+	DBConnectionsMaxLifetimeClosed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "db_connections_max_lifetime_closed_total",
+		Help: "Total number of connections closed due to SetConnMaxLifetime",
+	})
+)
+
 func init() {
 	// Register the metrics
 	// Counters
 	prometheus.MustRegister(RequestCount)
 	// Gauges
 	prometheus.MustRegister(InFlightGauge)
+	prometheus.MustRegister(DBConnectionsOpen)
+	prometheus.MustRegister(DBConnectionsIdle)
+	prometheus.MustRegister(DBConnectionsInUse)
 	// Histograms
 	prometheus.MustRegister(RequestDuration)
+	// Database connection pool counters
+	prometheus.MustRegister(DBConnectionsWaitCount)
+	prometheus.MustRegister(DBConnectionsWaitDuration)
+	prometheus.MustRegister(DBConnectionsMaxIdleClosed)
+	prometheus.MustRegister(DBConnectionsMaxLifetimeClosed)
 }

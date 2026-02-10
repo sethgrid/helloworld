@@ -25,6 +25,7 @@ import (
 
 	"github.com/sethgrid/helloworld/events"
 	"github.com/sethgrid/helloworld/logger"
+	"github.com/sethgrid/helloworld/metrics"
 	"github.com/sethgrid/helloworld/taskqueue"
 )
 
@@ -73,6 +74,7 @@ type Server struct {
 	publicHTTPServer   *http.Server
 
 	parentLogger *slog.Logger
+	db           *sql.DB // Store DB connection for metrics collection
 }
 
 func New(conf Config) (*Server, error) {
@@ -108,13 +110,13 @@ func New(conf Config) (*Server, error) {
 	} else {
 		rootLogger.Error("secure cookies and tls to the db are turned off")
 	}
-	// TODO: after db bootstrap, include db name before timeout and other options
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?timeout=5s&parseTime=true%s",
+	// Include database name in DSN - database should be bootstrapped before server starts
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?timeout=5s&parseTime=true%s",
 		conf.DBUser,
 		conf.DBPass,
 		conf.DBHost,
 		strings.TrimPrefix(conf.DBPort, ":"),
-
+		conf.DBName,
 		customTLS,
 	)
 
@@ -132,7 +134,7 @@ func New(conf Config) (*Server, error) {
 
 	db.SetConnMaxLifetime(time.Minute * 3)
 	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(0)
+	db.SetMaxIdleConns(5) // Allow idle connections for better performance
 	db.SetConnMaxIdleTime(time.Minute * 3)
 
 	if conf.RequireDBUp {
@@ -154,6 +156,7 @@ func New(conf Config) (*Server, error) {
 		addr:         addr,
 		protocol:     protocol,
 		inDebug:      conf.EnableDebug,
+		db:           db,
 		taskq:        taskqueue.NewMySQLTaskQueue(db, rootLogger, 3, 30*time.Second),
 		eventStore:   events.NewUserEvent(db, 2, rootLogger),
 	}, nil
@@ -350,6 +353,9 @@ func (s *Server) Serve() error {
 	runner := taskqueue.NewRunner(s.taskq, 1, s.parentLogger, 15*time.Second)
 	go runner.Start()
 
+	// Start database connection pool metrics collection
+	go s.collectDBMetrics()
+
 	publicHTTP := http.Server{
 		ReadTimeout:       s.config.RequestTimeout,
 		WriteTimeout:      s.config.RequestTimeout,
@@ -472,5 +478,27 @@ func timeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
 			// Pass the new context to the next handler
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
+	}
+}
+
+// collectDBMetrics periodically updates Prometheus metrics from database connection pool stats
+func (s *Server) collectDBMetrics() {
+	if s.db == nil {
+		return
+	}
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			stats := s.db.Stats()
+			metrics.DBConnectionsOpen.Set(float64(stats.OpenConnections))
+			metrics.DBConnectionsIdle.Set(float64(stats.Idle))
+			metrics.DBConnectionsInUse.Set(float64(stats.InUse))
+			metrics.DBConnectionsWaitCount.Add(float64(stats.WaitCount))
+			metrics.DBConnectionsWaitDuration.Add(stats.WaitDuration.Seconds())
+			metrics.DBConnectionsMaxIdleClosed.Add(float64(stats.MaxIdleClosed))
+			metrics.DBConnectionsMaxLifetimeClosed.Add(float64(stats.MaxLifetimeClosed))
+		}
 	}
 }
