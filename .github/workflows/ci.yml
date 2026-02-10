@@ -21,13 +21,12 @@ jobs:
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             BASE_REF="${{ github.event.pull_request.base.ref }}"
             HEAD_REF="${{ github.event.pull_request.head.sha }}"
+            git fetch origin "$BASE_REF" 2>/dev/null || git fetch origin master 2>/dev/null || git fetch origin main 2>/dev/null
+            BASE_COMMIT=$(git rev-parse "origin/$BASE_REF" 2>/dev/null || git rev-parse "origin/master" 2>/dev/null || git rev-parse "origin/main" 2>/dev/null)
           else
-            BASE_REF="${{ github.event.before }}"
+            BASE_COMMIT="${{ github.event.before }}"
             HEAD_REF="${{ github.event.after }}"
           fi
-          
-          git fetch origin "$BASE_REF" 2>/dev/null || git fetch origin master 2>/dev/null || git fetch origin main 2>/dev/null
-          BASE_COMMIT=$(git rev-parse "origin/$BASE_REF" 2>/dev/null || git rev-parse "origin/master" 2>/dev/null || git rev-parse "origin/main" 2>/dev/null || echo "$BASE_REF")
           
           CHANGED=$(git diff --name-only "$BASE_COMMIT" "$HEAD_REF" | grep -Fx "VERSION" || echo "")
           
