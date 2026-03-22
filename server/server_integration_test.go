@@ -39,8 +39,8 @@ func TestSomething(t *testing.T) {
 	defer dumpLogsOnFailure(t, logs)
 
 	// call the server at theURL. Inspect logs.
-	fmt.Printf(theURL)
-	fmt.Printf(logs.String())
+	fmt.Println(theURL)
+	fmt.Println(logs.String())
 
 }
 
