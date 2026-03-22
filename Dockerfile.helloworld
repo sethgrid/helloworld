@@ -1,9 +1,10 @@
-FROM golang:latest
+FROM golang:1.25-bookworm
 
 WORKDIR /go/src/helloworld
 
 COPY . .
 
+ARG helloworld_VERSION=dev
 RUN go build -ldflags="-X 'main.Version=${helloworld_VERSION}'" \
   -o /go/src/helloworld/bin/helloworld cmd/helloworld/main.go
 

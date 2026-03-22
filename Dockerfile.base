@@ -1,7 +1,7 @@
 # docker build -t sethgrid/golang-chromium:v0.1.0 -f Dockerfile.base .
 # docker push sethgrid/golang-chromium:v0.1.0
 
-FROM golang:latest
+FROM golang:1.25-bookworm
 
 # NOTE: this must contain 'helloworld' to match the value in getRootDir() otherwise we can't fetch templates and stuff
 WORKDIR /go/src/helloworld
