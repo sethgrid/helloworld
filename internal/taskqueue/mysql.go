@@ -6,58 +6,32 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/sethgrid/helloworld/metrics"
+	"github.com/sethgrid/helloworld/internal/db"
 	"github.com/sethgrid/kverr"
 )
 
 type MySQLTaskQueue struct {
 	Logger          *slog.Logger
-	DB              *sql.DB
+	DBManager       *db.Manager
 	RetryLimit      int
 	ReCheckoutAfter time.Duration
 }
 
-func NewMySQLTaskQueue(db *sql.DB, logger *slog.Logger, retryLimit int, itemExpiration time.Duration) *MySQLTaskQueue {
-	mq := &MySQLTaskQueue{
-		DB:              db,
+func NewMySQLTaskQueue(dbManager *db.Manager, logger *slog.Logger, retryLimit int, itemExpiration time.Duration) *MySQLTaskQueue {
+	return &MySQLTaskQueue{
+		DBManager:       dbManager,
 		Logger:          logger,
 		RetryLimit:      retryLimit,
 		ReCheckoutAfter: itemExpiration,
-	}
-	// Start metrics collection for this task queue's database connection
-	go mq.collectMetrics()
-	return mq
-}
-
-// collectMetrics periodically updates Prometheus metrics from database connection pool stats
-func (m *MySQLTaskQueue) collectMetrics() {
-	if m.DB == nil {
-		return
-	}
-	const storeLabel = "taskqueue"
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			stats := m.DB.Stats()
-			metrics.DBConnectionsOpen.WithLabelValues(storeLabel).Set(float64(stats.OpenConnections))
-			metrics.DBConnectionsIdle.WithLabelValues(storeLabel).Set(float64(stats.Idle))
-			metrics.DBConnectionsInUse.WithLabelValues(storeLabel).Set(float64(stats.InUse))
-			metrics.DBConnectionsWaitCount.WithLabelValues(storeLabel).Add(float64(stats.WaitCount))
-			metrics.DBConnectionsWaitDuration.WithLabelValues(storeLabel).Add(stats.WaitDuration.Seconds())
-			metrics.DBConnectionsMaxIdleClosed.WithLabelValues(storeLabel).Add(float64(stats.MaxIdleClosed))
-			metrics.DBConnectionsMaxLifetimeClosed.WithLabelValues(storeLabel).Add(float64(stats.MaxLifetimeClosed))
-		}
 	}
 }
 
 func (m *MySQLTaskQueue) AddTask(userID int, taskType string, payload string) (int, error) {
 	var result sql.Result
 	var err error
-	
+
 	err = timeDBOperation("add_task", func() error {
-		result, err = m.DB.Exec(`
+		result, err = m.DBManager.Writer.Exec(`
 			INSERT INTO tasks (user_id, task_type, payload, status, created_at, updated_at)
 			VALUES (?, ?, ?, 'open', NOW(), NOW())
 		`, userID, taskType, payload)
@@ -66,7 +40,7 @@ func (m *MySQLTaskQueue) AddTask(userID int, taskType string, payload string) (i
 	if err != nil {
 		return 0, err
 	}
-	
+
 	r, err := result.LastInsertId()
 	// on int64 systems, there is no issue here. If we go to a 32 bit system (whyy????) then we can put protections here by forcing int64
 	return int(r), err
@@ -75,10 +49,10 @@ func (m *MySQLTaskQueue) AddTask(userID int, taskType string, payload string) (i
 func (m *MySQLTaskQueue) FetchOpenTask() (*Task, error) {
 	var task *Task
 	var err error
-	
+
 	err = timeDBOperation("fetch_open_task", func() error {
-		// Begin a transaction
-		tx, err := m.DB.Begin()
+		// Begin a transaction on writer (we're updating task status)
+		tx, err := m.DBManager.Writer.Begin()
 		if err != nil {
 			return fmt.Errorf("failed to start transaction: %w", err)
 		}
@@ -127,16 +101,16 @@ func (m *MySQLTaskQueue) FetchOpenTask() (*Task, error) {
 		task.Status = "checked_out"
 		return nil
 	})
-	
+
 	return task, err
 }
 
 func (m *MySQLTaskQueue) CancelWhere(postWhereStatement string, args ...any) (int, error) {
 	var res sql.Result
 	var err error
-	
+
 	err = timeDBOperation("cancel_where", func() error {
-		res, err = m.DB.Exec("delete from tasks where "+postWhereStatement, args...)
+		res, err = m.DBManager.Writer.Exec("delete from tasks where "+postWhereStatement, args...)
 		if err != nil {
 			return fmt.Errorf("unable to cancel tasks: %w", err)
 		}
@@ -145,7 +119,7 @@ func (m *MySQLTaskQueue) CancelWhere(postWhereStatement string, args ...any) (in
 	if err != nil {
 		return 0, err
 	}
-	
+
 	count, err := res.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("unable to get row count when cancelling tasks")
@@ -157,8 +131,8 @@ func (m *MySQLTaskQueue) CancelWhere(postWhereStatement string, args ...any) (in
 
 func (m *MySQLTaskQueue) MarkTaskComplete(taskID int) error {
 	return timeDBOperation("mark_task_complete", func() error {
-		// Start a transaction
-		tx, err := m.DB.Begin()
+		// Start a transaction on writer
+		tx, err := m.DBManager.Writer.Begin()
 		if err != nil {
 			return err
 		}
@@ -202,8 +176,8 @@ func (m *MySQLTaskQueue) MarkTaskComplete(taskID int) error {
 
 func (m *MySQLTaskQueue) CheckAndMarkDeadTasks() error {
 	return timeDBOperation("check_and_mark_dead_tasks", func() error {
-		// Start a transaction
-		tx, err := m.DB.Begin()
+		// Start a transaction on writer
+		tx, err := m.DBManager.Writer.Begin()
 		if err != nil {
 			return err
 		}
