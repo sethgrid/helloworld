@@ -17,14 +17,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/XSAM/otelsql"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/riandyrn/otelchi"
+	"go.opentelemetry.io/otel"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/sethgrid/helloworld/internal/events"
 	"github.com/sethgrid/helloworld/internal/taskqueue"
+	"github.com/sethgrid/helloworld/internal/tracing"
 	"github.com/sethgrid/helloworld/logger"
 )
 
@@ -69,10 +74,29 @@ type Server struct {
 
 	parentLogger *slog.Logger
 	taskRunner   *taskqueue.Runner // Task queue runner for graceful shutdown
+
+	tracerShutdown func(context.Context) error
+	tracingEnabled bool
 }
 
 func New(conf Config) (*Server, error) {
 	rootLogger := logger.New().With("version", conf.Version)
+
+	var tracerShutdown func(context.Context) error
+	tracingEnabled := conf.OtelExporterOTLPEndpoint != ""
+	if tracingEnabled {
+		shutdown, err := tracing.Install(context.Background(), tracing.Config{
+			ServiceName:    conf.OtelServiceName,
+			ServiceVersion: conf.Version,
+			OTLPEndpoint:   conf.OtelExporterOTLPEndpoint,
+			Insecure:       conf.OtelExporterOTLPInsecure,
+			SampleRatio:    conf.OtelSampleRatio,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("tracing: %w", err)
+		}
+		tracerShutdown = shutdown
+	}
 
 	protocol := "http://"
 	customTLS := ""
@@ -121,7 +145,20 @@ func New(conf Config) (*Server, error) {
 		rootLogger.Debug("database connection", "dsn", maskedDSN)
 	}
 
-	db, err := sql.Open("mysql", dsn)
+	var db *sql.DB
+	var err error
+	if tracingEnabled {
+		driverName, regErr := otelsql.Register("mysql",
+			otelsql.WithTracerProvider(otel.GetTracerProvider()),
+			otelsql.WithAttributes(semconv.DBSystemMySQL),
+		)
+		if regErr != nil {
+			return nil, fmt.Errorf("otelsql register: %w", regErr)
+		}
+		db, err = sql.Open(driverName, dsn)
+	} else {
+		db, err = sql.Open("mysql", dsn)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("unable to connect to db: %w", err)
 	}
@@ -144,14 +181,16 @@ func New(conf Config) (*Server, error) {
 	eventStore := events.NewUserEvent(db, 2, rootLogger)
 
 	return &Server{config: conf,
-		port:          conf.Port,
-		parentLogger:  rootLogger,
-		addr:          addr,
-		protocol:      protocol,
-		inDebug:       conf.EnableDebug,
-		secureCookies: conf.ShouldSecure,
-		taskq:         taskq,
-		eventStore:    eventStore,
+		port:           conf.Port,
+		parentLogger:   rootLogger,
+		addr:           addr,
+		protocol:       protocol,
+		inDebug:        conf.EnableDebug,
+		secureCookies:  conf.ShouldSecure,
+		taskq:          taskq,
+		eventStore:     eventStore,
+		tracerShutdown: tracerShutdown,
+		tracingEnabled: tracingEnabled,
 	}, nil
 }
 
@@ -235,8 +274,14 @@ func (s *Server) Close() error {
 	// for better observability. However, errgroup doesn't support collecting all errors,
 	// so we log each error as it occurs and return the first error encountered.
 	err := g.Wait()
+	if s.tracerShutdown != nil {
+		ctx2, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if shutdownErr := s.tracerShutdown(ctx2); shutdownErr != nil {
+			s.parentLogger.Error("tracing shutdown", "error", shutdownErr.Error())
+		}
+		cancel()
+	}
 	if err != nil {
-		// Additional errors have already been logged by individual goroutines
 		return fmt.Errorf("shutdown completed with errors: %w", err)
 	}
 	return nil
@@ -258,9 +303,17 @@ func (s *Server) newRouter() *chi.Mux {
 	router.Use(customCORSMiddleware(origins))
 
 	router.Use(middleware.RealIP)
+	// Public app only: Chi route patterns (e.g. /items/{id}) become span names via otelchi.WithChiRoutes.
+	// Internal /metrics listener has no tracing middleware.
+	if s.tracingEnabled {
+		router.Use(otelchi.Middleware(s.config.OtelServiceName,
+			otelchi.WithChiRoutes(router),
+			otelchi.WithTracerProvider(otel.GetTracerProvider()),
+		))
+	}
 	router.Use(timeoutMiddleware(s.config.RequestTimeout))
 	router.Use(logger.Middleware(s.parentLogger, s.inDebug))
-	router.Use(middleware.Recoverer)
+	router.Use(panicRecoverMiddleware)
 
 	return router
 }
