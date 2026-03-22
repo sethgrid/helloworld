@@ -59,7 +59,8 @@ services:
     # Allows binaries built in docker to be shared back to the host system
     volumes:
       - ./bin:/go/src/helloworld/bin
-    command: ["sh", "-c", "export helloworld_VERSION=$(cat VERSION) && GOOS=linux GOARCH=amd64 go build -ldflags=\"-X 'main.Version=${helloworld_VERSION}'\" -o /go/src/helloworld/bin/helloworld cmd/helloworld/main.go && echo 'Binary built! See bin/helloworld'"]
+    # $$ escapes $ for Docker Compose so the shell receives ${helloworld_VERSION} (see Compose interpolation)
+    command: ["sh", "-c", "export helloworld_VERSION=$(cat VERSION) && GOOS=linux GOARCH=amd64 go build -ldflags=\"-X 'main.Version=$${helloworld_VERSION}'\" -o /go/src/helloworld/bin/helloworld cmd/helloworld/main.go && echo 'Binary built! See bin/helloworld'"]
 
   db-load-seed:
     build:

@@ -58,7 +58,7 @@ A production-ready Go HTTP server template demonstrating modern Go patterns and 
 
 ### Prerequisites
 
-Install `make`, `docker`, `docker compose`, and `go` (1.23+).
+Install `make`, `docker`, `docker compose`, and `go` (1.25+; match `go.mod`).
 
 Recommended: `alias dc='docker compose'`
 
