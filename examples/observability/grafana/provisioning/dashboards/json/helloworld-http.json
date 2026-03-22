@@ -1,0 +1,70 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [
+    {
+      "title": "Explore (choose Tempo datasource)",
+      "type": "link",
+      "icon": "bolt",
+      "url": "/explore",
+      "tooltip": "Open Explore, select Tempo, TraceQL: { resource.service.name = \"helloworld\" }"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum by (method, endpoint) (rate(http_requests_total[5m]))",
+          "legendFormat": "{{method}} {{endpoint}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP request rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "http_in_flight_requests",
+          "legendFormat": "in flight",
+          "refId": "A"
+        }
+      ],
+      "title": "In-flight requests",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 16 },
+      "id": 3,
+      "options": {
+        "content": "### Traces (Tempo)\n\nUse the **Explore** link above, pick datasource **Tempo**, **TraceQL** tab, for example:\n\n`{ resource.service.name = \"helloworld\" }`",
+        "mode": "markdown"
+      },
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["helloworld"],
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Helloworld HTTP",
+  "uid": "helloworld-http",
+  "version": 1
+}

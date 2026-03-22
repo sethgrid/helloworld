@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: helloworld
+    static_configs:
+      # Internal metrics listener (see HELLOWORLD_INTERNAL_PORT, default 16667)
+      - targets: ["host.docker.internal:16667"]

@@ -1,0 +1,30 @@
+# Single-process Tempo: OTLP in, local blocks, HTTP query API on :3200 (used by Grafana).
+# Ref: https://grafana.com/docs/tempo/latest/configuration/
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+        http:
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 48h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /tmp/tempo/wal
+    local:
+      path: /tmp/tempo/blocks
+
+overrides:
+  defaults: {}
