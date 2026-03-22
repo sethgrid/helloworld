@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -27,6 +27,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/sethgrid/helloworld/internal/db"
 	"github.com/sethgrid/helloworld/internal/events"
 	"github.com/sethgrid/helloworld/internal/taskqueue"
 	"github.com/sethgrid/helloworld/internal/tracing"
@@ -77,6 +78,7 @@ type Server struct {
 
 	tracerShutdown func(context.Context) error
 	tracingEnabled bool
+	dbManager      *db.Manager // Database connection manager
 }
 
 func New(conf Config) (*Server, error) {
@@ -145,8 +147,7 @@ func New(conf Config) (*Server, error) {
 		rootLogger.Debug("database connection", "dsn", maskedDSN)
 	}
 
-	var db *sql.DB
-	var err error
+	sqlDriver := ""
 	if tracingEnabled {
 		driverName, regErr := otelsql.Register("mysql",
 			otelsql.WithTracerProvider(otel.GetTracerProvider()),
@@ -155,30 +156,37 @@ func New(conf Config) (*Server, error) {
 		if regErr != nil {
 			return nil, fmt.Errorf("otelsql register: %w", regErr)
 		}
-		db, err = sql.Open(driverName, dsn)
-	} else {
-		db, err = sql.Open("mysql", dsn)
+		sqlDriver = driverName
 	}
+	// Create database connection manager with reader/writer support
+	// For now, reader and writer use the same DSN (single-instance setup)
+	// In production, you could pass a different readerDSN for read replicas
+	dbManager, err := db.NewManager(sqlDriver, dsn, "", rootLogger)
 	if err != nil {
-		return nil, fmt.Errorf("unable to connect to db: %w", err)
+		return nil, fmt.Errorf("unable to create db manager: %w", err)
 	}
 
-	db.SetConnMaxLifetime(time.Minute * 3)
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5) // Allow idle connections for better performance
-	db.SetConnMaxIdleTime(time.Minute * 3)
+	// Configure connection pool settings
+	dbManager.ConfigurePool(10, 5, 3*time.Minute, 3*time.Minute)
 
 	if conf.RequireDBUp {
-		if err := pingDB(db, 10, conf, rootLogger); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := dbManager.Ping(ctx); err != nil {
+			dbManager.Close()
 			return nil, fmt.Errorf("unable to ping db: %w", err)
 		}
 	} else {
-		go pingDB(db, 10, conf, rootLogger)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = dbManager.Ping(ctx)
+		}()
 	}
 
 	addr := fmt.Sprintf("%s:%d", conf.Hostname, conf.Port)
-	taskq := taskqueue.NewMySQLTaskQueue(db, rootLogger, 3, 30*time.Second)
-	eventStore := events.NewUserEvent(db, 2, rootLogger)
+	taskq := taskqueue.NewMySQLTaskQueue(dbManager, rootLogger, 3, 30*time.Second)
+	eventStore := events.NewUserEvent(dbManager, 2, rootLogger)
 
 	return &Server{config: conf,
 		port:           conf.Port,
@@ -189,27 +197,18 @@ func New(conf Config) (*Server, error) {
 		secureCookies:  conf.ShouldSecure,
 		taskq:          taskq,
 		eventStore:     eventStore,
+		dbManager:      dbManager,
 		tracerShutdown: tracerShutdown,
 		tracingEnabled: tracingEnabled,
 	}, nil
 }
 
-func pingDB(db *sql.DB, retryCount int, conf Config, logger *slog.Logger) error {
-	var err error
-	for i := 0; i < retryCount; i++ {
-		logger.Info("attempting db; if hanging for local dev, restart docker",
-			"repro", fmt.Sprintf("mysql --host=%s --port=%s -u%s -p --connect-timeout=10", conf.DBHost, conf.DBPort, conf.DBUser),
-		)
-		if err = db.Ping(); err != nil {
-			time.Sleep(time.Duration(i) * time.Second)
-			continue
-		}
-		break
-	}
-	if err != nil {
-		return fmt.Errorf("unable to ping db after several attempts: %w", err)
-	}
-	return nil
+// addJitter adds random jitter to a delay to prevent thundering herd problems.
+// Jitter is ±25% of the delay duration.
+func addJitter(delay time.Duration) time.Duration {
+	// Use math/rand for simplicity (crypto/rand not needed for jitter)
+	jitter := time.Duration(float64(delay) * 0.25 * (2.0*rand.Float64() - 1.0))
+	return delay + jitter
 }
 
 func (s *Server) Close() error {
@@ -264,6 +263,16 @@ func (s *Server) Close() error {
 			err := s.taskRunner.Close()
 			if err != nil {
 				s.parentLogger.Error("unable to close task queue runner", "error", err.Error())
+			}
+			return err
+		})
+	}
+
+	if s.dbManager != nil {
+		g.Go(func() error {
+			err := s.dbManager.Close()
+			if err != nil {
+				s.parentLogger.Error("unable to close database manager", "error", err.Error())
 			}
 			return err
 		})
@@ -402,8 +411,9 @@ func (s *Server) Serve() error {
 		for retryCount < maxRetries {
 			l, err := net.Listen("tcp", fmt.Sprintf(":%d", s.config.InternalPort))
 			if err != nil {
-				// Exponential backoff: 1s, 2s, 4s, 8s, 16s
+				// Exponential backoff with jitter: 1s, 2s, 4s, 8s, 16s
 				delay := baseDelay * time.Duration(1<<uint(retryCount))
+				delay = addJitter(delay)
 				s.parentLogger.Error("unable to start internal listener, retrying",
 					"error", err.Error(),
 					"retry", retryCount+1,
@@ -423,8 +433,9 @@ func (s *Server) Serve() error {
 			s.mu.Unlock()
 
 			if err := internalHTTP.Serve(l); err != nil {
-				// Server stopped, retry with exponential backoff
+				// Server stopped, retry with exponential backoff and jitter
 				delay := baseDelay * time.Duration(1<<uint(retryCount))
+				delay = addJitter(delay)
 				s.parentLogger.Error("internal server stopped, retrying",
 					"error", err.Error(),
 					"retry", retryCount+1,

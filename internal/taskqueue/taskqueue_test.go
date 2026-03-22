@@ -9,6 +9,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql" // used if we are manually testing the queue against the db via unit tests
+	"github.com/sethgrid/helloworld/internal/db"
 	"github.com/sethgrid/helloworld/logger"
 	"github.com/stretchr/testify/assert"
 )
@@ -32,19 +33,28 @@ func TestTaskQueue(t *testing.T) {
 
 	if queueInSQL {
 		dsn := "testuser:testuser@tcp(127.0.0.1:3306)/helloworld?parseTime=true"
-		db, err := sql.Open("mysql", dsn)
+		sqlDB, err := sql.Open("mysql", dsn)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = db.Ping(); err != nil {
+		if err = sqlDB.Ping(); err != nil {
 			t.Fatal(err)
 		}
+
+		// Create db manager from the connection
+		// For testing, we'll create a manager with the same DSN for reader/writer
+		dbManager, err := db.NewManager("", dsn, "", log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Configure pool settings
+		dbManager.ConfigurePool(10, 5, 3*time.Minute, 3*time.Minute)
 
 		// give sql more time
 		itemExpiration *= 3
 		pollInterval *= 3
 
-		q = NewMySQLTaskQueue(db, log, retries, itemExpiration)
+		q = NewMySQLTaskQueue(dbManager, log, retries, itemExpiration)
 	} else {
 		q = NewInMemoryTaskQueue(retries, itemExpiration, log)
 	}
