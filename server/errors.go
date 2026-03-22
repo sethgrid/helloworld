@@ -16,9 +16,9 @@ type errorResp struct {
 // This is a standalone helper function that doesn't require the Server struct, following modern Go handler patterns.
 // The log is written first to ensure it's captured even if the response write fails.
 func errorJSON(w http.ResponseWriter, r *http.Request, statusCode int, userMsg string, err error) {
-	// NOTE: if this was a kverr, those key:value pairs will be pulled out and attached to our error log here
-	// Log first to ensure it's captured even if response write fails due to timeout
-	logger := logger.FromRequest(r).With("status_code", statusCode).With(kverr.YoinkArgs(err)...)
+	// NOTE: if this was a kverr, those key:value pairs will be pulled out and attached to our error log here.
+	// Log first to ensure it's captured even if response write fails due to timeout.
+	logger := logger.FromRequest(r).With("status_code", statusCode).With(kverr.Args(err)...)
 	logger.Error(userMsg, "error", err.Error())
 
 	// Try to write response, but don't fail if it's already too late

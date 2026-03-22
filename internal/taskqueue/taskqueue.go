@@ -188,10 +188,10 @@ func (tq *Runner) processTask(task Task) {
 	// Mark task as complete only if processing succeeded
 	err := tq.TaskStore.MarkTaskComplete(task.ID)
 	if err != nil {
-		// Use structured error logging with kverr context
-		// kverr.YoinkArgs returns key-value pairs that we spread into the logger
+		// Use structured error logging with kverr context.
+		// kverr.Args returns key-value pairs that we spread into the logger.
 		logger = logger.With("component", "taskqueue")
-		logger = logger.With(kverr.YoinkArgs(err)...)
+		logger = logger.With(kverr.Args(err)...)
 		logger.Error("unable to mark task complete", "error", err.Error())
 		// This is a critical error - the task was processed but we can't mark it complete
 		// The task may be reprocessed, which could cause duplicate work

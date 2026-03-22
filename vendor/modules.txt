@@ -60,7 +60,7 @@ github.com/prometheus/common/model
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
-# github.com/sethgrid/kverr v0.0.0-20241118164339-2e0df7a392b4
+# github.com/sethgrid/kverr v1.0.1
 ## explicit; go 1.23.1
 github.com/sethgrid/kverr
 # github.com/stretchr/testify v1.9.0

@@ -39,8 +39,8 @@ github.com/prometheus/procfs v0.15.1 h1:YagwOFzUgYfKKHX6Dr+sHT7km/hxC76UB0leargg
 github.com/prometheus/procfs v0.15.1/go.mod h1:fB45yRUv8NstnjriLhBQLuOUt+WW4BsoGhij/e3PBqk=
 github.com/rogpeppe/go-internal v1.10.0 h1:TMyTOH3F/DB16zRVcYyreMH6GnZZrwQVAoYjRBZyWFQ=
 github.com/rogpeppe/go-internal v1.10.0/go.mod h1:UQnix2H7Ngw/k4C5ijL5+65zddjncjaFoBhdsK/akog=
-github.com/sethgrid/kverr v0.0.0-20241118164339-2e0df7a392b4 h1:MHCqE94rEMy/N8AZUJeDM8t5bZXNwGPeyKXIg3tEsBc=
-github.com/sethgrid/kverr v0.0.0-20241118164339-2e0df7a392b4/go.mod h1:AF7s3N8pefsxZ5IbOeaX5urMkDCSo0nqOYZPgcw/FCo=
+github.com/sethgrid/kverr v1.0.1 h1:wrhG072S4P5cNrMggPXE97T6FtOJ/h39M7fuLBbmsog=
+github.com/sethgrid/kverr v1.0.1/go.mod h1:AF7s3N8pefsxZ5IbOeaX5urMkDCSo0nqOYZPgcw/FCo=
 github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 golang.org/x/sync v0.9.0 h1:fEo0HyrW1GIgZdpbhCRO0PkJajUS5H9IFUztCgEo2jQ=
