@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,7 +123,11 @@ func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) h
 				}
 				duration := time.Since(start)
 
-				metrics.RequestCount.With(prometheus.Labels{"method": r.Method, "endpoint": path}).Inc()
+				metrics.RequestCount.With(prometheus.Labels{
+					"method":   r.Method,
+					"endpoint": path,
+					"status":   strconv.Itoa(ww.Status()),
+				}).Inc()
 				metrics.RequestDuration.With(prometheus.Labels{"method": r.Method, "endpoint": path}).Observe(duration.Seconds())
 
 				if shouldPrint {

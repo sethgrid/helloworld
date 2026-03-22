@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,7 +33,7 @@ func handleHelloworld(eventStore eventWriter) http.HandlerFunc {
 		if delay := r.URL.Query().Get("delay"); delay != "" {
 			duration, err := time.ParseDuration(delay)
 			if err != nil {
-				errorJSON(w, r, http.StatusBadRequest, "invalid delay", kverr.New(err, "delay", delay))
+				errorHandler(w, r, http.StatusBadRequest, "invalid delay", kverr.New(err, "delay", delay))
 				return
 			}
 			if duration > 90*time.Second {
@@ -46,7 +47,7 @@ func handleHelloworld(eventStore eventWriter) http.HandlerFunc {
 			select {
 			case <-r.Context().Done():
 				err := kverr.New(fmt.Errorf("context canceled"), "context_err", r.Context().Err())
-				errorJSON(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
+				errorHandler(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
 				return
 			default:
 			}
@@ -55,13 +56,13 @@ func handleHelloworld(eventStore eventWriter) http.HandlerFunc {
 
 			err = someWorkThatChecksContextDeadline(r.Context())
 			if err != nil {
-				errorJSON(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
+				errorHandler(w, r, http.StatusRequestTimeout, "context deadline exceeded", err)
 				return
 			}
 
 		} else if err := RandomFailure(); err != nil {
 			// NOTE: we don't have to tell other services that a kverr is being passed in
-			errorJSON(w, r, http.StatusInternalServerError, "random failure", err)
+			errorHandler(w, r, http.StatusInternalServerError, "random failure", err)
 			return
 		}
 
@@ -78,8 +79,15 @@ func handleHelloworld(eventStore eventWriter) http.HandlerFunc {
 			EventStoreMessage:   eventStoreMessage,
 		}
 
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			logger.FromRequest(r).Error("unable to encode json", "error", err.Error())
+		var buf bytes.Buffer
+		if err := json.NewEncoder(&buf).Encode(resp); err != nil {
+			errorHandler(w, r, http.StatusInternalServerError, "unable to encode response", err)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(buf.Bytes()); err != nil {
+			logger.FromRequest(r).Error("failed to write response body", "error", err.Error())
 		}
 	}
 }
@@ -126,15 +134,13 @@ func DoSomethingWithEvents(eventStore eventWriter, logger *slog.Logger) error {
 func handleHealthcheck(eventStore eventWriter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if eventStore == nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("503 Service Unavailable - Event store not configured"))
+			errorHandler(w, r, http.StatusServiceUnavailable, "event store not configured", nil)
 			return
 		}
 
 		if !eventStore.IsAvailable() {
-			logger.FromRequest(r).Error("health check failed - database unreachable")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("503 Service Unavailable - Database unreachable"))
+			err := fmt.Errorf("database unreachable")
+			errorHandler(w, r, http.StatusServiceUnavailable, "database unreachable", err)
 			return
 		}
 

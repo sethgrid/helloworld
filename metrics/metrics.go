@@ -4,13 +4,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// RequestCount Counter
+// RequestCount Counter (includes HTTP status for SLO / 5xx monitoring)
 var RequestCount = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "http_requests_total",
 		Help: "Number of HTTP requests handled by the server",
 	},
-	[]string{"method", "endpoint"},
+	[]string{"method", "endpoint", "status"},
 )
 
 // InFlightGauge

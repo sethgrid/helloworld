@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"runtime"
@@ -11,12 +12,12 @@ import (
 
 // StatusResponse represents the status page response
 type StatusResponse struct {
-	Status      string                 `json:"status"`
-	Version     string                 `json:"version"`
-	Uptime      string                 `json:"uptime"`
-	Timestamp   time.Time              `json:"timestamp"`
-	Components  map[string]ComponentStatus `json:"components"`
-	System      SystemInfo             `json:"system"`
+	Status     string                     `json:"status"`
+	Version    string                     `json:"version"`
+	Uptime     string                     `json:"uptime"`
+	Timestamp  time.Time                  `json:"timestamp"`
+	Components map[string]ComponentStatus `json:"components"`
+	System     SystemInfo                 `json:"system"`
 }
 
 // ComponentStatus represents the status of a component
@@ -28,9 +29,9 @@ type ComponentStatus struct {
 
 // SystemInfo represents system-level information
 type SystemInfo struct {
-	GoVersion   string `json:"go_version"`
+	GoVersion    string `json:"go_version"`
 	NumGoroutine int    `json:"num_goroutines"`
-	NumCPU      int    `json:"num_cpu"`
+	NumCPU       int    `json:"num_cpu"`
 }
 
 var serverStartTime = time.Now()
@@ -39,9 +40,9 @@ var serverStartTime = time.Now()
 func handleStatus(eventStore eventWriter, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log := logger.FromRequest(r)
-		
+
 		components := make(map[string]ComponentStatus)
-		
+
 		// Check event store
 		eventStoreStatus := ComponentStatus{
 			Status:      "healthy",
@@ -55,7 +56,7 @@ func handleStatus(eventStore eventWriter, version string) http.HandlerFunc {
 			eventStoreStatus.Message = "Database unreachable"
 		}
 		components["event_store"] = eventStoreStatus
-		
+
 		// Determine overall status
 		overallStatus := "healthy"
 		for _, comp := range components {
@@ -67,16 +68,16 @@ func handleStatus(eventStore eventWriter, version string) http.HandlerFunc {
 				}
 			}
 		}
-		
+
 		// Get system info
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
-		
+
 		status := StatusResponse{
-			Status:    overallStatus,
-			Version:   version,
-			Uptime:    time.Since(serverStartTime).String(),
-			Timestamp: time.Now(),
+			Status:     overallStatus,
+			Version:    version,
+			Uptime:     time.Since(serverStartTime).String(),
+			Timestamp:  time.Now(),
 			Components: components,
 			System: SystemInfo{
 				GoVersion:    runtime.Version(),
@@ -84,7 +85,7 @@ func handleStatus(eventStore eventWriter, version string) http.HandlerFunc {
 				NumCPU:       runtime.NumCPU(),
 			},
 		}
-		
+
 		// Set appropriate status code
 		statusCode := http.StatusOK
 		if overallStatus == "unhealthy" {
@@ -92,12 +93,16 @@ func handleStatus(eventStore eventWriter, version string) http.HandlerFunc {
 		} else if overallStatus == "degraded" {
 			statusCode = http.StatusOK // Still return 200 but indicate degraded status
 		}
-		
+
+		var buf bytes.Buffer
+		if err := json.NewEncoder(&buf).Encode(status); err != nil {
+			errorHandler(w, r, http.StatusInternalServerError, "failed to encode status response", err)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(statusCode)
-		
-		if err := json.NewEncoder(w).Encode(status); err != nil {
-			log.Error("failed to encode status response", "error", err)
+		if _, err := w.Write(buf.Bytes()); err != nil {
+			log.Error("failed to write status response body", "error", err)
 		}
 	}
 }

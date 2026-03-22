@@ -10,11 +10,11 @@ import (
 
 // rateLimiter implements a simple token bucket rate limiter
 type rateLimiter struct {
-	mu          sync.Mutex
-	tokens      int
-	maxTokens   int
-	refillRate  time.Duration
-	lastRefill  time.Time
+	mu         sync.Mutex
+	tokens     int
+	maxTokens  int
+	refillRate time.Duration
+	lastRefill time.Time
 }
 
 // newRateLimiter creates a new rate limiter with the specified rate
@@ -38,7 +38,7 @@ func (rl *rateLimiter) allow() bool {
 
 	now := time.Now()
 	elapsed := now.Sub(rl.lastRefill)
-	
+
 	// Refill tokens based on elapsed time
 	tokensToAdd := int(elapsed / rl.refillRate)
 	if tokensToAdd > 0 {
@@ -56,14 +56,13 @@ func (rl *rateLimiter) allow() bool {
 // rateLimitMiddleware creates a middleware that rate limits requests
 func rateLimitMiddleware(requestsPerSecond int) func(http.Handler) http.Handler {
 	limiter := newRateLimiter(requestsPerSecond)
-	
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !limiter.allow() {
 				logger.FromRequest(r).Warn("rate limit exceeded", "ip", r.RemoteAddr)
 				w.Header().Set("Retry-After", "1")
-				w.WriteHeader(http.StatusTooManyRequests)
-				w.Write([]byte("429 Too Many Requests"))
+				errorHandler(w, r, http.StatusTooManyRequests, "too many requests", nil)
 				return
 			}
 			next.ServeHTTP(w, r)

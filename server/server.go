@@ -260,7 +260,7 @@ func (s *Server) newRouter() *chi.Mux {
 	router.Use(middleware.RealIP)
 	router.Use(timeoutMiddleware(s.config.RequestTimeout))
 	router.Use(logger.Middleware(s.parentLogger, s.inDebug))
-	router.Use(middleware.Recoverer)
+	router.Use(panicRecoverMiddleware)
 
 	return router
 }

@@ -133,7 +133,7 @@ func TestContextTimeoutAndRequestTimeout(t *testing.T) {
 			return // Found the log entry
 		}
 		if time.Since(start) >= timeout {
-			// Log might not appear if the handler never got to execute errorJSON
+			// Log might not appear if the handler never got to execute errorHandler
 			// This can happen if the HTTP server's WriteTimeout closes the connection
 			// before the handler can log. This is a known race condition.
 			t.Logf("Log entry not found within timeout. This may be a race condition. Log buffer: %s", logContent)
