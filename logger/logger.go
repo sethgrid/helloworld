@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/sethgrid/helloworld/metrics"
 )
@@ -103,7 +104,17 @@ func Printer(l *slog.Logger) Printable {
 func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
-			logger, _, r := NewRequestLogger(r.Context(), r, logger)
+			log, ctx, r := NewRequestLogger(r.Context(), r, logger)
+			if span := trace.SpanFromContext(r.Context()); span.SpanContext().IsValid() {
+				sc := span.SpanContext()
+				log = log.With(
+					"trace_id", sc.TraceID().String(),
+					"span_id", sc.SpanID().String(),
+				)
+				ctx = context.WithValue(ctx, CtxLogger, log)
+				r = r.WithContext(ctx)
+			}
+			logger := log
 			middleware.WithLogEntry(r, nil)
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 

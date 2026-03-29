@@ -22,16 +22,20 @@ type Manager struct {
 }
 
 // NewManager creates a new database connection manager.
+// sqlDriver is the registered driver name (e.g. "mysql" or an otelsql-registered name). If empty, "mysql" is used.
 // If readerDSN is empty, reader will use the same connection as writer.
-func NewManager(writerDSN, readerDSN string, logger *slog.Logger) (*Manager, error) {
-	writer, err := sql.Open("mysql", writerDSN)
+func NewManager(sqlDriver, writerDSN, readerDSN string, logger *slog.Logger) (*Manager, error) {
+	if sqlDriver == "" {
+		sqlDriver = "mysql"
+	}
+	writer, err := sql.Open(sqlDriver, writerDSN)
 	if err != nil {
 		return nil, err
 	}
 
 	var reader *sql.DB
 	if readerDSN != "" && readerDSN != writerDSN {
-		reader, err = sql.Open("mysql", readerDSN)
+		reader, err = sql.Open(sqlDriver, readerDSN)
 		if err != nil {
 			writer.Close()
 			return nil, err
@@ -121,7 +125,7 @@ func (m *Manager) collectMetrics() {
 // Close closes all database connections and stops metrics collection.
 func (m *Manager) Close() error {
 	close(m.closer)
-	
+
 	var errs []error
 	if err := m.Writer.Close(); err != nil {
 		errs = append(errs, err)
@@ -131,7 +135,7 @@ func (m *Manager) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	
+
 	if len(errs) > 0 {
 		// Use errors.Join to combine multiple errors (Go 1.20+)
 		return errors.Join(errs...)

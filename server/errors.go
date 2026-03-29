@@ -8,6 +8,8 @@ import (
 
 	"github.com/sethgrid/helloworld/logger"
 	"github.com/sethgrid/kverr"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type errorResp struct {
@@ -15,7 +17,7 @@ type errorResp struct {
 }
 
 // errorJSON is the standard JSON error response. Logs first so entries survive client disconnects.
-// When err is non-nil it logs at ERROR; when nil it logs at INFO.
+// When err is non-nil it logs at ERROR; when nil it logs at INFO. Records span status when tracing is active.
 func errorJSON(w http.ResponseWriter, r *http.Request, statusCode int, userMsg string, err error) {
 	log := logger.FromRequest(r).With("status_code", statusCode).With(kverr.Args(err)...)
 	if err != nil {
@@ -23,6 +25,8 @@ func errorJSON(w http.ResponseWriter, r *http.Request, statusCode int, userMsg s
 	} else {
 		log.Info(userMsg)
 	}
+
+	recordErrorSpan(r, statusCode, userMsg, err)
 
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(statusCode)
@@ -32,7 +36,20 @@ func errorJSON(w http.ResponseWriter, r *http.Request, statusCode int, userMsg s
 	}
 }
 
-// panicRecoverMiddleware recovers panics and responds with JSON via errorJSON.
+func recordErrorSpan(r *http.Request, statusCode int, userMsg string, err error) {
+	span := trace.SpanFromContext(r.Context())
+	if !span.IsRecording() {
+		return
+	}
+	if statusCode >= 400 {
+		span.SetStatus(codes.Error, userMsg)
+		if err != nil {
+			span.RecordError(err)
+		}
+	}
+}
+
+// panicRecoverMiddleware recovers panics, records them on the active span, and responds with JSON via errorJSON.
 func panicRecoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -46,6 +63,11 @@ func panicRecoverMiddleware(next http.Handler) http.Handler {
 					err = fmt.Errorf("%v", v)
 				}
 				wrapped := kverr.New(err, "stack", stack)
+				span := trace.SpanFromContext(r.Context())
+				if span.IsRecording() {
+					span.RecordError(wrapped)
+					span.SetStatus(codes.Error, "panic")
+				}
 				errorJSON(w, r, http.StatusInternalServerError, "internal server error", wrapped)
 			}
 		}()

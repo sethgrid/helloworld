@@ -43,7 +43,7 @@ func TestTaskQueue(t *testing.T) {
 
 		// Create db manager from the connection
 		// For testing, we'll create a manager with the same DSN for reader/writer
-		dbManager, err := db.NewManager(dsn, "", log)
+		dbManager, err := db.NewManager("", dsn, "", log)
 		if err != nil {
 			t.Fatal(err)
 		}

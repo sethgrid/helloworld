@@ -33,6 +33,12 @@ type Config struct {
 
 	SGAPIKey string `default:"" envconfig:"sendgrid_apikey"`
 
+	// OpenTelemetry: when OtelExporterOTLPEndpoint is non-empty, traces export via OTLP gRPC (e.g. Tempo or collector on 4317).
+	OtelExporterOTLPEndpoint string  `default:"" envconfig:"otel_exporter_otlp_endpoint"`
+	OtelExporterOTLPInsecure bool    `default:"true" envconfig:"otel_exporter_otlp_insecure"`
+	OtelServiceName          string  `default:"helloworld" envconfig:"otel_service_name"`
+	OtelSampleRatio          float64 `default:"1" envconfig:"otel_sample_ratio"`
+
 	Version string
 }
 

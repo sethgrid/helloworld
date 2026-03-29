@@ -62,7 +62,9 @@ jobs:
 
       - name: Read VERSION
         id: version
-        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          echo "VERSION=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Build
         run: |
