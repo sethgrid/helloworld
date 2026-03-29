@@ -13,7 +13,7 @@ The helloworld binary runs **on the host** so you can develop without rebuilding
 ## Prerequisites
 
 - Docker with Compose v2
-- The tracing + otelsql PR merged into the branch you're running (PR3 / `pr/3-db-manager-sql-driver`); without it, `HELLOWORLD_OTEL_EXPORTER_OTLP_ENDPOINT` is ignored and no traces are emitted
+`HELLOWORLD_OTEL_EXPORTER_OTLP_ENDPOINT` is ignored and no traces are emitted
 - Linux: `host.docker.internal` is set on the Prometheus service for scraping the host
 
 ## 1. Start MySQL
