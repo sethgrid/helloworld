@@ -28,6 +28,21 @@ services:
       - "host.docker.internal:host-gateway"
     # No host port: scrape targets only; Grafana reaches Prometheus on the Docker network.
 
+  loki:
+    image: grafana/loki:3.2.0
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
+
+  promtail:
+    image: grafana/promtail:3.2.0
+    command: ["-config.file=/etc/promtail/promtail.yaml"]
+    volumes:
+      - ./promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      - ../../logs/helloworld.logs:/var/log/helloworld.logs:ro
+    depends_on:
+      - loki
+
   grafana:
     image: grafana/grafana:11.3.0
     ports:
@@ -40,3 +55,4 @@ services:
     depends_on:
       - prometheus
       - tempo
+      - loki

@@ -4,6 +4,10 @@ DROP DATABASE IF EXISTS helloworld;
 -- Create the 'helloworld' database;
 CREATE DATABASE helloworld;
 
+-- Grant testuser access (MYSQL_USER is created without DB grants when MYSQL_DATABASE is unset)
+GRANT ALL ON helloworld.* TO 'testuser'@'%';
+FLUSH PRIVILEGES;
+
 -- Use the 'helloworld' database;
 USE helloworld;
 
