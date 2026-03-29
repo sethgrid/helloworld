@@ -21,9 +21,16 @@ type Manager struct {
 	closer chan struct{}
 }
 
-// NewManager creates a new database connection manager.
-// sqlDriver is the registered driver name (e.g. "mysql" or an otelsql-registered name). If empty, "mysql" is used.
-// If readerDSN is empty, reader will use the same connection as writer.
+// NewManager creates a new database connection manager with separate writer and reader connections.
+//
+// sqlDriver is the registered sql driver name. Pass "" to use the default "mysql" driver.
+// When OpenTelemetry tracing is enabled, pass the name returned by otelsql.Register() instead as
+// that call wraps the "mysql" driver and returns a dynamically generated name that captures
+// DB spans. Without this indirection, otelsql cannot intercept sql.Open.
+//
+//	 sqlDriver options:
+//		""                          no tracing; NewManager defaults to "mysql"
+//		otelsql.Register("mysql")   tracing enabled; dynamically registered driver wrapping "mysql"
 func NewManager(sqlDriver, writerDSN, readerDSN string, logger *slog.Logger) (*Manager, error) {
 	if sqlDriver == "" {
 		sqlDriver = "mysql"
