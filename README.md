@@ -114,6 +114,18 @@ Configuration is loaded from environment variables with the `HELLOWORLD_` prefix
 - Request-scoped loggers with request IDs
 - Errors include structured key-value pairs via `kverr`
 
+**Traces and local Grafana stack (Tempo + Prometheus):**
+
+For a Grafana-first setup (metrics + traces in one UI), OTLP to Tempo, and a small HTTP load script, see **[examples/observability/README.md](examples/observability/README.md)**. From the repo root:
+
+```bash
+docker compose -f examples/observability/docker-compose.yml up -d
+export HELLOWORLD_OTEL_EXPORTER_OTLP_ENDPOINT=127.0.0.1:4317
+export HELLOWORLD_OTEL_EXPORTER_OTLP_INSECURE=true
+go run ./cmd/helloworld
+./examples/observability/loadgen.sh
+```
+
 **Grafana Dashboard:**
 ```bash
 dc up -d mysql grafana
