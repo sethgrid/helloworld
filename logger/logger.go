@@ -105,6 +105,22 @@ func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) h
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			log, ctx, r := NewRequestLogger(r.Context(), r, logger)
+
+			// If a span is already active on this request, attach its IDs to every log line
+			// for the duration of the request. This correlates structured logs with the trace
+			// in Tempo:
+			//
+			//   {"rid":"abc","trace_id":"4bf92f3577b34da6...","span_id":"00f067aa0ba902b7",...}
+			//
+			// The span is started by otelchi (which runs before this middleware) and may itself
+			// be a child of a span propagated by the caller via the W3C traceparent header:
+			//
+			//   traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+			//
+			// When a client (browser, mobile app, or upstream service) sends that header,
+			// the server span becomes a child of the client's span and the full call chain
+			// appears as a single trace in Tempo. See:
+			// https://www.w3.org/TR/trace-context/#traceparent-header-field-values
 			if span := trace.SpanFromContext(r.Context()); span.SpanContext().IsValid() {
 				sc := span.SpanContext()
 				log = log.With(
