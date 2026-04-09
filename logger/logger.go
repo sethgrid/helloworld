@@ -141,7 +141,10 @@ func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) h
 				metrics.InFlightGauge.Dec()
 
 				path := r.URL.Path
-				if ww.Status() == http.StatusNotFound {
+				status := ww.Status()
+				// ww.Status() returns 0 when WriteHeader was never explicitly called (chi unmatched routes).
+				// Treat 0 the same as 404 to prevent path scanners from polluting metric cardinality.
+				if status == http.StatusNotFound || status == 0 {
 					// prevent path scanners from polluting logs and messing up path / endpoint cardinality.
 					// use a separate, dedicated key that we are not aggregating against. Keeps memory down.
 					logger = logger.With("path_high_cardinality", path)
