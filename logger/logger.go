@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -140,24 +141,18 @@ func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) h
 			defer func() {
 				metrics.InFlightGauge.Dec()
 
-				path := r.URL.Path
-				status := ww.Status()
-				// ww.Status() returns 0 when WriteHeader was never explicitly called (chi unmatched routes).
-				// Treat 0 the same as 404 to prevent path scanners from polluting metric cardinality.
-				if status == http.StatusNotFound || status == 0 {
-					// prevent path scanners from polluting logs and messing up path / endpoint cardinality.
-					// use a separate, dedicated key that we are not aggregating against. Keeps memory down.
-					logger = logger.With("path_high_cardinality", path)
-					path = "redacted for cardinality protection"
+				endpoint := chiRoutePattern(r)
+				if endpoint == "other" {
+					logger = logger.With("path_high_cardinality", r.URL.Path)
 				}
 				duration := time.Since(start)
 
-				metrics.RequestCount.With(prometheus.Labels{"method": r.Method, "endpoint": path}).Inc()
-				metrics.RequestDuration.With(prometheus.Labels{"method": r.Method, "endpoint": path}).Observe(duration.Seconds())
+				metrics.RequestCount.With(prometheus.Labels{"method": r.Method, "endpoint": endpoint}).Inc()
+				metrics.RequestDuration.With(prometheus.Labels{"method": r.Method, "endpoint": endpoint}).Observe(duration.Seconds())
 
 				if shouldPrint {
 					logger.Info("route",
-						"path", path,
+						"path", endpoint,
 						"verb", r.Method,
 						"status", http.StatusText(ww.Status()),
 						"code", ww.Status(),
@@ -171,4 +166,16 @@ func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) h
 		}
 		return http.HandlerFunc(fn)
 	}
+}
+
+func chiRoutePattern(r *http.Request) string {
+	rctx := chi.RouteContext(r.Context())
+	if rctx == nil {
+		return "other"
+	}
+	pattern := rctx.RoutePattern()
+	if pattern == "" || pattern == "/*" {
+		return "other"
+	}
+	return pattern
 }
