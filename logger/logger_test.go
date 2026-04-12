@@ -7,40 +7,32 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
-// TestMiddlewareCardinalityProtection verifies that unmatched routes — whether they
-// produce an explicit 404 or no WriteHeader call at all (chi returns status 0 for
-// unmatched routes) — have their paths redacted in logs and metrics to prevent
-// scanner traffic from causing a cardinality explosion.
+// TestMiddlewareCardinalityProtection verifies that requests matched to a registered
+// chi route use the route pattern as the metric label, while unregistered routes
+// (scanner traffic, typos, catch-alls) are bucketed as "other" with the real path
+// logged separately to prevent cardinality explosion.
 func TestMiddlewareCardinalityProtection(t *testing.T) {
 	tests := []struct {
 		name         string
-		handler      http.HandlerFunc
 		path         string
 		wantRedacted bool
 	}{
 		{
-			name: "known path passes through unchanged",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			},
+			name:         "registered route uses pattern, no redaction",
 			path:         "/api/users",
 			wantRedacted: false,
 		},
 		{
-			name: "explicit 404 triggers redaction",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusNotFound)
-			},
+			name:         "scanner path not in router triggers redaction",
 			path:         "/wp-admin/login.php",
 			wantRedacted: true,
 		},
 		{
-			name: "status 0 (unmatched chi route, WriteHeader never called) triggers redaction",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				// intentionally write nothing — chi returns 0 for unmatched routes
-			},
+			name:         "dot-env probe triggers redaction",
 			path:         "/.env",
 			wantRedacted: true,
 		},
@@ -52,17 +44,20 @@ func TestMiddlewareCardinalityProtection(t *testing.T) {
 			log := slog.New(slog.NewJSONHandler(&buf, nil))
 			mw := Middleware(log, true)
 
+			router := chi.NewRouter()
+			router.Use(mw)
+			router.Get("/api/users", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 			rr := httptest.NewRecorder()
-			mw(http.HandlerFunc(tt.handler)).ServeHTTP(rr, req)
+			router.ServeHTTP(rr, req)
 
 			output := buf.String()
 			if tt.wantRedacted {
 				if !strings.Contains(output, "path_high_cardinality") {
 					t.Errorf("expected path_high_cardinality in log output, got: %s", output)
-				}
-				if !strings.Contains(output, "redacted for cardinality protection") {
-					t.Errorf("expected redacted path in log output, got: %s", output)
 				}
 			} else {
 				if strings.Contains(output, "path_high_cardinality") {
