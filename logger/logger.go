@@ -158,6 +158,7 @@ func Middleware(logger *slog.Logger, shouldPrint bool) func(next http.Handler) h
 						"code", ww.Status(),
 						"bytes", ww.BytesWritten(),
 						"duration_ms", duration.Milliseconds(),
+						"ip", r.RemoteAddr,
 					)
 				}
 			}()
