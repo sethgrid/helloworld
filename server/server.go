@@ -82,7 +82,7 @@ type Server struct {
 }
 
 func New(conf Config) (*Server, error) {
-	rootLogger := logger.New().With("version", conf.Version)
+	rootLogger := logger.New().With("app", "helloworld", "version", conf.Version)
 
 	var tracerShutdown func(context.Context) error
 	tracingEnabled := conf.OtelExporterOTLPEndpoint != ""
